@@ -1,0 +1,133 @@
+---
+title: 'Machine Learning Project: Data Preparation'
+output: html_document
+---
+
+# Load, Code and Split
+
+First, load the miRNA `.RData` file and the clinical `.RData` file.
+```{r}
+load("kirc_mirna.RData")
+load("kirc_clin.RData")
+```
+
+Add a column called "stage" to the clinical data frame that is just a copy of the 
+tumor stage column. Recode that column so that stages I and II are labeled
+"early" and stages III and IV are labeled "late.""
+
+```{r}
+clin_os$stage <- clin_os$ajcc_pathologic_tumor_stage
+clin_os[clin_os$stage == "Stage I" | clin_os$stage == "Stage II", "stage"] <- "early"
+clin_os[clin_os$stage == "Stage III" | clin_os$stage == "Stage IV", "stage"] <- "late"
+head(clin_os)
+```
+
+Split the clinical data into two data frames, early and late
+
+```{r}
+clin_early <- clin_os[clin_os$stage == "early", ]
+clin_late <- clin_os[clin_os$stage == "late", ]
+```
+
+Create vector of integers from 1 to the number of rows in the data frame and randomly
+shuffle those integers.
+
+```{r}
+set.seed(10); r_early_rows <- sample(1:nrow(clin_early), nrow(clin_early))
+set.seed(23); r_late_rows <- sample(1:nrow(clin_late), nrow(clin_late))
+```
+
+Shuffle the two data frames.
+
+```{r}
+r_clin_early <- clin_early[r_early_rows, ]
+r_clin_late <- clin_late[r_late_rows, ]
+```
+
+Split each data frame into a training set (80%) and test set (20%).
+
+```{r}
+clin_early_train <- r_clin_early[1:round(.8*nrow(r_clin_early)), ]
+clin_early_test <- r_clin_early[(round(.8*nrow(r_clin_early)) + 1):nrow(r_clin_early), ]
+clin_late_train <- r_clin_late[1:round(.8*nrow(r_clin_late)), ]
+clin_late_test <- r_clin_late[(round(.8*nrow(r_clin_late)) + 1):nrow(r_clin_late), ]
+```
+
+Finally combine the training sets with each other and the test sets with each other.
+
+```{r}
+clin_train <- rbind(clin_early_train, clin_late_train)
+clin_test <- rbind(clin_early_test, clin_late_test)
+```
+
+# Select miRNAs
+
+## Supervised
+
+One way to select miRNAs is to use for predictors is to use a supervised method. So the outcome data (tumor stage) would be used to select the predictors. For each miRNA, we'll look at the expression value for each patient. For example, let's look at the first miRNA.
+
+```{r}
+head(mir_tumor[, 1:3])
+```
+
+The miRNA labeled `hsa-let-7a-1` can be split into two categories, depending on the tumor stage
+of each patient in the clinical data frame. Here's a box plot show the different distributions
+of miRNA expression level for `hsa-let-7a-1` in early and late stage tumors in the training set.
+
+```{r}
+# get the patient barcodes from the column names in the tumor table
+ids <- names(mir_tumor)[-1]
+ids <- strsplit(ids, "-", fixed = FALSE)
+ids <- sapply(ids, function(x) paste(x[1:3], collapse = "-"))
+
+# create a data frame with a patient id column, where the rows are
+# in the same order as the columns in the mir_tumor data frame 
+ids <- data.frame(ids, stringsAsFactors = FALSE)
+
+# merge that data frame with the clinical data frame to get the stage,
+# but preserve the order of columns in the mir_tumor data frame
+ids_stage <- merge(ids, clin_os[, c("bcr_patient_barcode", "stage")],
+                   all.x = TRUE, by.x = "ids", by.y = "bcr_patient_barcode")
+
+# make the stage column a factor
+ids_stage$stage <- factor(ids_stage$stage)
+
+# boxplot of the expression data from the first row of the mir_tumor data
+# frame explained by stage
+boxplot(as.numeric(mir_tumor[1, 2:ncol(mir_tumor)]) ~ ids_stage$stage,
+        main = mir_tumor[1, 1])
+```
+
+And we can get the p-value for the hypothesis that there is no difference in the mean
+of these two distributions.
+
+```{r}
+early_t <- as.numeric(mir_tumor[1, 2:ncol(mir_tumor)])[ids_stage$stage == "early"]
+late_t <- as.numeric(mir_tumor[1, 2:ncol(mir_tumor)])[ids_stage$stage == "late"]
+t.test(early_t, late_t)$p.value
+```
+
+It appears we shouldn't reject the null hypothesis, which makes sense based on the boxplot.
+
+Now we run the t-test for all of the miRNAs and order them from smallest to largest p-value.
+
+```{r}
+# I use an apply() function to loop through the rows of the mir_tumor
+# data frame
+pvalue <- apply(mir_tumor[, -1], 1, function(row, stage){
+  early <- as.numeric(row)[stage == "early"]
+  late <- as.numeric(row)[stage == "late"]
+  t.test(early, late)$p.value
+}, stage = ids_stage$stage)
+```
+
+So now we can rank the `mir_tumor` table for selecting the number of miRNAs that is ideal for
+each algorithm
+
+```{r}
+ranked_mir_tumor <- data.frame(pvalue, mir_tumor, stringsAsFactors = FALSE)
+ranked_mir_tumor <- ranked_mir_tumor[order(ranked_mir_tumor$pvalue),]
+head(ranked_mir_tumor[, 1:3])
+```
+
+
