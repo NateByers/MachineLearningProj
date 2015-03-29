@@ -57,18 +57,16 @@ clin_late_train <- r_clin_late[1:round(.8*nrow(r_clin_late)), ]
 clin_late_test <- r_clin_late[(round(.8*nrow(r_clin_late)) + 1):nrow(r_clin_late), ]
 ```
 
-Finally combine the training sets with each other and the test sets with each other.
+Finally, combine the training sets with each other and the test sets with each other.
 
 ```{r}
 clin_train <- rbind(clin_early_train, clin_late_train)
 clin_test <- rbind(clin_early_test, clin_late_test)
 ```
 
-# Select miRNAs
+# Rank miRNAs
 
-## Supervised
-
-One way to select miRNAs is to use for predictors is to use a supervised method. So the outcome data (tumor stage) would be used to select the predictors. For each miRNA, we'll look at the expression value for each patient. For example, let's look at the first miRNA.
+One way to select miRNAs is to use a supervised method. So the outcome data (tumor stage) would be used to select the predictors. For each miRNA, we'll look at the expression value for each patient. For example, let's look at the first miRNA.
 
 ```{r}
 head(mir_tumor[, 1:3])

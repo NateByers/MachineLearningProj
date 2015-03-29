@@ -101,15 +101,13 @@ r_clin_late &lt;- clin_late[r_late_rows, ]</code></pre>
 clin_early_test &lt;- r_clin_early[(round(.8*nrow(r_clin_early)) + 1):nrow(r_clin_early), ]
 clin_late_train &lt;- r_clin_late[1:round(.8*nrow(r_clin_late)), ]
 clin_late_test &lt;- r_clin_late[(round(.8*nrow(r_clin_late)) + 1):nrow(r_clin_late), ]</code></pre>
-<p>Finally combine the training sets with each other and the test sets with each other.</p>
+<p>Finally, combine the training sets with each other and the test sets with each other.</p>
 <pre class="r"><code>clin_train &lt;- rbind(clin_early_train, clin_late_train)
 clin_test &lt;- rbind(clin_early_test, clin_late_test)</code></pre>
 </div>
-<div id="select-mirnas" class="section level1">
-<h1>Select miRNAs</h1>
-<div id="supervised" class="section level2">
-<h2>Supervised</h2>
-<p>One way to select miRNAs is to use for predictors is to use a supervised method. So the outcome data (tumor stage) would be used to select the predictors. For each miRNA, we’ll look at the expression value for each patient. For example, let’s look at the first miRNA.</p>
+<div id="rank-mirnas" class="section level1">
+<h1>Rank miRNAs</h1>
+<p>One way to select miRNAs is to use a supervised method. So the outcome data (tumor stage) would be used to select the predictors. For each miRNA, we’ll look at the expression value for each patient. For example, let’s look at the first miRNA.</p>
 <pre class="r"><code>head(mir_tumor[, 1:3])</code></pre>
 <pre><code>##       miRNA_id TCGA-3Z-A93Z-01A-11R-A37P-13 TCGA-6D-AA2E-01A-11R-A37P-13
 ## 1 hsa-let-7a-1                    7968.5881                   10844.7663
@@ -169,7 +167,6 @@ head(ranked_mir_tumor[, 1:3])</code></pre>
 <p>The training set, test set, and ranked miRNAs will be kept a file called ’split_data.RData`.</p>
 <pre class="r"><code>save(clin_train, clin_test, ranked_mir_tumor, 
      file = &quot;split_data.RData&quot;)</code></pre>
-</div>
 </div>
 
 
