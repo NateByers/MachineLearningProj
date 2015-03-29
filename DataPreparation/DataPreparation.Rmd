@@ -3,12 +3,16 @@ title: 'Machine Learning Project: Data Preparation'
 output: html_document
 ---
 
-# Load, Code and Split
+This page documents the data preparation, including splitting the data
+into training and test sets and ranking the miRNAs for feature selection.
+
+# Load, Code Tumor Stage, and Split
 
 First, load the miRNA `.RData` file and the clinical `.RData` file.
+
 ```{r}
-load("kirc_mirna.RData")
-load("kirc_clin.RData")
+load("../Data/kirc_mirna.RData")
+load("../Data/kirc_clin.RData")
 ```
 
 Add a column called "stage" to the clinical data frame that is just a copy of the 
@@ -130,4 +134,9 @@ ranked_mir_tumor <- ranked_mir_tumor[order(ranked_mir_tumor$pvalue),]
 head(ranked_mir_tumor[, 1:3])
 ```
 
+The training set, test set, and ranked miRNAs will be kept a file called 'split_data.RData`.
 
+```{r, eval = FALSE}
+save(clin_train, clin_test, ranked_mir_tumor, 
+     file = "split_data.RData")
+```
