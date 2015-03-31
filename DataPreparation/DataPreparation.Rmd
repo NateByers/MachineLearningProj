@@ -73,7 +73,7 @@ head(mir_tumor[, 1:3])
 ```
 
 The miRNA labeled `hsa-let-7a-1` can be split into two categories, depending on the tumor stage
-of each patient in the clinical data frame. Here's a box plot show the different distributions
+of each patient in the clinical data frame. Here's a box plot showing the different distributions
 of miRNA expression level for `hsa-let-7a-1` in early and late stage tumors in the training set.
 
 ```{r}
@@ -136,5 +136,5 @@ The training set, test set, and ranked miRNAs will be kept a file called 'split_
 
 ```{r, eval = FALSE}
 save(clin_train, clin_test, ranked_mir_tumor, 
-     file = "split_data.RData")
+     file = "../Data/split_data.RData")
 ```
