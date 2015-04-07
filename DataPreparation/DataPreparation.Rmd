@@ -6,7 +6,7 @@ output: html_document
 This page documents the data preparation, including splitting the data
 into training and test sets and ranking the miRNAs for feature selection.
 
-# Load, Code Tumor Stage, and Split
+## Load, Code Tumor Stage, and Merge
 
 First, load the miRNA `.RData` file and the clinical `.RData` file.
 
@@ -20,121 +20,209 @@ tumor stage column. Recode that column so that stages I and II are labeled
 "early" and stages III and IV are labeled "late.""
 
 ```{r}
-clin_os$stage <- clin_os$ajcc_pathologic_tumor_stage
-clin_os[clin_os$stage == "Stage I" | clin_os$stage == "Stage II", "stage"] <- "early"
-clin_os[clin_os$stage == "Stage III" | clin_os$stage == "Stage IV", "stage"] <- "late"
-head(clin_os)
+kirc_clin$stage <- kirc_clin$ajcc_pathologic_tumor_stage
+kirc_clin[kirc_clin$stage == "Stage I" | kirc_clin$stage == "Stage II", "stage"] <- "early"
+kirc_clin[kirc_clin$stage == "Stage III" | kirc_clin$stage == "Stage IV", "stage"] <- "late"
 ```
 
-Split the clinical data into two data frames, early and late
+Now we'll merge the data so that we have one data frame with all of the clinical and expression data together.
 
 ```{r}
-clin_early <- clin_os[clin_os$stage == "early", ]
-clin_late <- clin_os[clin_os$stage == "late", ]
+all_data <- merge(kirc_clin[, c("bcr_patient_barcode", "stage")], kirc_mirna)
+
+# rename id column
+names(all_data)[1] <- "id"
+```
+
+## Split into Training and Test Sets
+
+First, create a subset of the data that contains just the rows that are in the early stage.
+
+```{r}
+early_data <- all_data[all_data$stage == "early", ]
 ```
 
 Create vector of integers from 1 to the number of rows in the data frame and randomly
 shuffle those integers.
 
 ```{r}
-set.seed(10); r_early_rows <- sample(1:nrow(clin_early), nrow(clin_early))
-set.seed(23); r_late_rows <- sample(1:nrow(clin_late), nrow(clin_late))
+set.seed(10); r_early_rows <- sample(1:nrow(early_data), nrow(early_data))
 ```
 
-Shuffle the two data frames.
+Shuffle the early data frame.
 
 ```{r}
-r_clin_early <- clin_early[r_early_rows, ]
-r_clin_late <- clin_late[r_late_rows, ]
+r_early_data <- early_data[r_early_rows, ]
 ```
 
-Split each data frame into a training set (80%) and test set (20%).
+Split the early data into a training set (80%) and test set (20%).
 
 ```{r}
-clin_early_train <- r_clin_early[1:round(.8*nrow(r_clin_early)), ]
-clin_early_test <- r_clin_early[(round(.8*nrow(r_clin_early)) + 1):nrow(r_clin_early), ]
-clin_late_train <- r_clin_late[1:round(.8*nrow(r_clin_late)), ]
-clin_late_test <- r_clin_late[(round(.8*nrow(r_clin_late)) + 1):nrow(r_clin_late), ]
+early_train <- r_early_data[1:round(.8*nrow(r_early_data)), ]
+early_test <- r_early_data[(round(.8*nrow(r_early_data)) + 1): nrow(r_early_data), ]
+```
+
+Now do the same thing for the remaining subset of the data, corresponding to the late stage.
+
+```{r}
+late_data <- all_data[all_data$stage == "late", ]
+set.seed(23); r_late_rows <- sample(1:nrow(late_data), nrow(late_data))
+r_late_data <- late_data[r_late_rows, ]
+late_train <- r_late_data[1:round(.8*nrow(r_late_data)), ]
+late_test <- r_late_data[(round(.8*nrow(r_late_data)) + 1):nrow(r_late_data), ]
 ```
 
 Finally, combine the training sets with each other and the test sets with each other.
 
 ```{r}
-clin_train <- rbind(clin_early_train, clin_late_train)
-clin_test <- rbind(clin_early_test, clin_late_test)
+train_data <- rbind(early_train, late_train)
+test_data <- rbind(early_test, late_test)
 ```
 
-# Rank miRNAs
+## Remove Zero Variance Features
+
+We can safely remove any miRNAs in the training set that have zero variance.
+
+```{r}
+no_variance <- sapply(train_data[, -c(1:2)], function(column){
+  v <- var(column, na.rm = TRUE)
+  if(v == 0){TRUE}else{FALSE}
+  })
+train_data <- train_data[, c(TRUE, TRUE, !no_variance)]
+```
+
+## Rank miRNAs
 
 One way to select miRNAs is to use a supervised method. So the outcome data (tumor stage) would be used to select the predictors. For each miRNA, we'll look at the expression value for each patient. For example, let's look at the first miRNA.
 
 ```{r}
-head(mir_tumor[, 1:3])
+head(train_data[, 1:3])
 ```
 
-The miRNA labeled `hsa-let-7a-1` can be split into two categories, depending on the tumor stage
+The miRNA labeled `hsa.let.7a.1` can be split into two categories, depending on the tumor stage
 of each patient in the clinical data frame. Here's a box plot showing the different distributions
-of miRNA expression level for `hsa-let-7a-1` in early and late stage tumors in the training set.
+of miRNA expression level for `hsa.let.7a.1` in early and late stage tumors in the training set.
 
 ```{r}
-# get the patient barcodes from the column names in the tumor table
-ids <- names(mir_tumor)[-1]
-ids <- strsplit(ids, "-", fixed = FALSE)
-ids <- sapply(ids, function(x) paste(x[1:3], collapse = "-"))
-
-# create a data frame with a patient id column, where the rows are
-# in the same order as the columns in the mir_tumor data frame 
-ids <- data.frame(ids, stringsAsFactors = FALSE)
-
-# merge that data frame with the clinical data frame to get the stage,
-# but preserve the order of columns in the mir_tumor data frame
-ids_stage <- merge(ids, clin_os[, c("bcr_patient_barcode", "stage")],
-                   all.x = TRUE, by.x = "ids", by.y = "bcr_patient_barcode")
-
-# make the stage column a factor
-ids_stage$stage <- factor(ids_stage$stage)
-
-# boxplot of the expression data from the first row of the mir_tumor data
-# frame explained by stage
-boxplot(as.numeric(mir_tumor[1, 2:ncol(mir_tumor)]) ~ ids_stage$stage,
-        main = mir_tumor[1, 1])
+boxplot(hsa.let.7a.1 ~ stage, data = train_data)
 ```
 
 And we can get the p-value for the hypothesis that there is no difference in the mean
 of these two distributions.
 
 ```{r}
-early_t <- as.numeric(mir_tumor[1, 2:ncol(mir_tumor)])[ids_stage$stage == "early"]
-late_t <- as.numeric(mir_tumor[1, 2:ncol(mir_tumor)])[ids_stage$stage == "late"]
+early_t <- train_data[, 3][train_data$stage == "early"]
+late_t <- train_data[, 3][train_data$stage == "late"]
 t.test(early_t, late_t)$p.value
 ```
 
 It appears we shouldn't reject the null hypothesis, which makes sense based on the boxplot.
 
-Now we run the t-test for all of the miRNAs and order them from smallest to largest p-value.
+Now we run the t-test for all of the miRNAs.
 
 ```{r}
-# I use an apply() function to loop through the rows of the mir_tumor
+# I use an apply() function to loop through the columns of the mir_tumor
 # data frame
-pvalue <- apply(mir_tumor[, -1], 1, function(row, stage){
-  early <- as.numeric(row)[stage == "early"]
-  late <- as.numeric(row)[stage == "late"]
+pvalue <- apply(train_data[, -c(1:2)], 2, function(column, stage){
+  early <- column[stage == "early"]
+  late <- column[stage == "late"]
   t.test(early, late)$p.value
-}, stage = ids_stage$stage)
+}, stage = train_data$stage)
 ```
 
 So now we can rank the `mir_tumor` table for selecting the number of miRNAs that is ideal for
-each algorithm
+each algorithm.
 
 ```{r}
-ranked_mir_tumor <- data.frame(pvalue, mir_tumor, stringsAsFactors = FALSE)
-ranked_mir_tumor <- ranked_mir_tumor[order(ranked_mir_tumor$pvalue),]
-head(ranked_mir_tumor[, 1:3])
+miRNA_pvalue <- data.frame(miRNA_id = names(train_data)[-c(1:2)], pvalue, stringsAsFactors = FALSE)
+miRNA_pvalue <- miRNA_pvalue[order(miRNA_pvalue$pvalue),]
+head(miRNA_pvalue)
 ```
 
-The training set, test set, and ranked miRNAs will be kept a file called 'split_data.RData`.
+## Low Variance
+
+We can also look at the distribution of variance and see if there are features that have very low variance, which we
+can consider removing (if we determine a cutoff). Here I calculate the coefficient of variation, which is the standard deviation divided by the mean.
+
+
+```{r}
+train_coef_var <- sapply(train_data[, -c(1:2)], function(column){
+  sd(column, na.rm = TRUE)/mean(column, na.rm = TRUE)
+  })
+train_coef_var <- train_coef_var[order(train_coef_var)]
+summary(train_coef_var)
+boxplot(train_coef_var)
+```
+
+## Remove Correlated Features
+
+We can also remove highly correlated miRNAs. This would be an unsupervised method. 
+
+Here I create a function that takes a data frame of normalized features and calculates the correlation
+matrix for those features. It then finds the two highest correlated features. If that correlation is above a threshold
+then one of the features is dropped (the one with the highest mean correlation with all of the other features
+in the matrix). After the feature is removed, a correlation matrix is calculated for the remaining features and the 
+process is repeated until the highest correlation is below the threshold.
+
+```{r}
+removeCorrFeatures <- function(data, cutoff){ 
+  # get correlation matrix
+  cor_m <- cor(data, use = "pairwise.complete.obs")
+  # replace diagonal of 1s with diagonal of 0s so that the max correlation isn't
+  # a feature's correlation with itself
+  cor_m[cor_m == 1] = 0
+  # find the column with the maximum correlation
+  col.max <- which.max(apply(cor_m, 2, max))
+  # find the row of the max correlation in that column
+  row.max <- which.max(cor_m[, col.max])
+  # get the max value
+  max <- cor_m[names(row.max), names(col.max)]
+  # loop while the max correlation is above the threshold
+  while(max > cutoff){
+    # get the column for the first in the pair of highly correlated miRNAs
+    mirna1 <- cor_m[, names(col.max)]
+    # remove the pair from the values in that column
+    mirna1 <- mirna1[!(names(mirna1) %in% c(names(col.max), names(row.max)))]
+    # get the mean of correlations with all other features
+    mean1 <- mean(mirna1)
+    # repeat for the second in the pair
+    mirna2 <- cor_m[, names(row.max)]
+    mirna2 <- mirna2[!(names(mirna2) %in% c(names(col.max), names(row.max)))]
+    mean2 <- mean(mirna2)
+    # if the mean of the first in the pair is greater, remove that one--otherwise
+    # remove the second
+    if(mean1 > mean2)
+    {
+      data <- data[names(data) != names(col.max)]
+    }else{
+      data <- data[names(data) != names(row.max)]
+    }
+    # restart the process until you get the max value
+    cor_m <- cor(data, use = "pairwise.complete.obs")
+    cor_m[cor_m == 1] = 0
+    col.max <- which.max(apply(cor_m, 2, max))
+    row.max <- which.max(cor_m[, col.max])
+    max <- cor_m[names(row.max), names(col.max)]
+  }
+  # return the trimmed data frame
+  data
+}
+
+```
+
+This function can be used to trim the data down to 713 features if the cutoff is set to .75 (it takes about 3 minutes
+to run)
+
+```{r, eval=FALSE}
+train_trimmed <- removeCorrFeatures(train_data[, -c(1:2)], cutoff = .75)
+```
+
+## Save Data and Function
+
+The training set, test set, and ranked miRNAs will be kept a file called 'split_data.RData'. The `removeCorrFeatures()` function will be kept in a file called 'functions.RData'.
 
 ```{r, eval = FALSE}
-save(clin_train, clin_test, ranked_mir_tumor, 
+save(train_data, test_data, miRNA_pvalue, 
      file = "../Data/split_data.RData")
+save(removeCorrFeatures, file = "../Data/functions.RData")
 ```

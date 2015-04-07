@@ -56,117 +56,159 @@ if (window.hljs && document.readyState && document.readyState === "complete") {
 
 
 <p>This page documents the data preparation, including splitting the data into training and test sets and ranking the miRNAs for feature selection.</p>
-<div id="load-code-tumor-stage-and-split" class="section level1">
-<h1>Load, Code Tumor Stage, and Split</h1>
+<div id="load-code-tumor-stage-and-merge" class="section level2">
+<h2>Load, Code Tumor Stage, and Merge</h2>
 <p>First, load the miRNA <code>.RData</code> file and the clinical <code>.RData</code> file.</p>
 <pre class="r"><code>load(&quot;../Data/kirc_mirna.RData&quot;)
 load(&quot;../Data/kirc_clin.RData&quot;)</code></pre>
 <p>Add a column called “stage” to the clinical data frame that is just a copy of the tumor stage column. Recode that column so that stages I and II are labeled “early” and stages III and IV are labeled “late.”&quot;</p>
-<pre class="r"><code>clin_os$stage &lt;- clin_os$ajcc_pathologic_tumor_stage
-clin_os[clin_os$stage == &quot;Stage I&quot; | clin_os$stage == &quot;Stage II&quot;, &quot;stage&quot;] &lt;- &quot;early&quot;
-clin_os[clin_os$stage == &quot;Stage III&quot; | clin_os$stage == &quot;Stage IV&quot;, &quot;stage&quot;] &lt;- &quot;late&quot;
-head(clin_os)</code></pre>
-<pre><code>##   bcr_patient_barcode vital_status last_contact_days_to    death_days_to
-## 3        TCGA-B0-5698        Alive                 2181 [Not Applicable]
-## 4        TCGA-B0-5710        Alive                  957 [Not Applicable]
-## 5        TCGA-B0-5711        Alive                 2553 [Not Applicable]
-## 6        TCGA-B0-5712        Alive                 2438 [Not Applicable]
-## 7        TCGA-B0-5713        Alive                 1865 [Not Applicable]
-## 8        TCGA-B0-5812        Alive                 2325 [Not Applicable]
-##   age_at_initial_pathologic_diagnosis gender tumor_grade
-## 3                                  77   MALE          G3
-## 4                                  57   MALE          G2
-## 5                                  50   MALE          G3
-## 6                                  68 FEMALE          G3
-## 7                                  75 FEMALE          G3
-## 8                                  53   MALE          G3
-##   ajcc_pathologic_tumor_stage stage
-## 3                     Stage I early
-## 4                     Stage I early
-## 5                   Stage III  late
-## 6                    Stage IV  late
-## 7                   Stage III  late
-## 8                     Stage I early</code></pre>
-<p>Split the clinical data into two data frames, early and late</p>
-<pre class="r"><code>clin_early &lt;- clin_os[clin_os$stage == &quot;early&quot;, ]
-clin_late &lt;- clin_os[clin_os$stage == &quot;late&quot;, ]</code></pre>
-<p>Create vector of integers from 1 to the number of rows in the data frame and randomly shuffle those integers.</p>
-<pre class="r"><code>set.seed(10); r_early_rows &lt;- sample(1:nrow(clin_early), nrow(clin_early))
-set.seed(23); r_late_rows &lt;- sample(1:nrow(clin_late), nrow(clin_late))</code></pre>
-<p>Shuffle the two data frames.</p>
-<pre class="r"><code>r_clin_early &lt;- clin_early[r_early_rows, ]
-r_clin_late &lt;- clin_late[r_late_rows, ]</code></pre>
-<p>Split each data frame into a training set (80%) and test set (20%).</p>
-<pre class="r"><code>clin_early_train &lt;- r_clin_early[1:round(.8*nrow(r_clin_early)), ]
-clin_early_test &lt;- r_clin_early[(round(.8*nrow(r_clin_early)) + 1):nrow(r_clin_early), ]
-clin_late_train &lt;- r_clin_late[1:round(.8*nrow(r_clin_late)), ]
-clin_late_test &lt;- r_clin_late[(round(.8*nrow(r_clin_late)) + 1):nrow(r_clin_late), ]</code></pre>
-<p>Finally, combine the training sets with each other and the test sets with each other.</p>
-<pre class="r"><code>clin_train &lt;- rbind(clin_early_train, clin_late_train)
-clin_test &lt;- rbind(clin_early_test, clin_late_test)</code></pre>
+<pre class="r"><code>kirc_clin$stage &lt;- kirc_clin$ajcc_pathologic_tumor_stage
+kirc_clin[kirc_clin$stage == &quot;Stage I&quot; | kirc_clin$stage == &quot;Stage II&quot;, &quot;stage&quot;] &lt;- &quot;early&quot;
+kirc_clin[kirc_clin$stage == &quot;Stage III&quot; | kirc_clin$stage == &quot;Stage IV&quot;, &quot;stage&quot;] &lt;- &quot;late&quot;</code></pre>
+<p>Now we’ll merge the data so that we have one data frame with all of the clinical and expression data together.</p>
+<pre class="r"><code>all_data &lt;- merge(kirc_clin[, c(&quot;bcr_patient_barcode&quot;, &quot;stage&quot;)], kirc_mirna)
+
+# rename id column
+names(all_data)[1] &lt;- &quot;id&quot;</code></pre>
 </div>
-<div id="rank-mirnas" class="section level1">
-<h1>Rank miRNAs</h1>
+<div id="split-into-training-and-test-sets" class="section level2">
+<h2>Split into Training and Test Sets</h2>
+<p>First, create a subset of the data that contains just the rows that are in the early stage.</p>
+<pre class="r"><code>early_data &lt;- all_data[all_data$stage == &quot;early&quot;, ]</code></pre>
+<p>Create vector of integers from 1 to the number of rows in the data frame and randomly shuffle those integers.</p>
+<pre class="r"><code>set.seed(10); r_early_rows &lt;- sample(1:nrow(early_data), nrow(early_data))</code></pre>
+<p>Shuffle the early data frame.</p>
+<pre class="r"><code>r_early_data &lt;- early_data[r_early_rows, ]</code></pre>
+<p>Split the early data into a training set (80%) and test set (20%).</p>
+<pre class="r"><code>early_train &lt;- r_early_data[1:round(.8*nrow(r_early_data)), ]
+early_test &lt;- r_early_data[(round(.8*nrow(r_early_data)) + 1): nrow(r_early_data), ]</code></pre>
+<p>Now do the same thing for the remaining subset of the data, corresponding to the late stage.</p>
+<pre class="r"><code>late_data &lt;- all_data[all_data$stage == &quot;late&quot;, ]
+set.seed(23); r_late_rows &lt;- sample(1:nrow(late_data), nrow(late_data))
+r_late_data &lt;- late_data[r_late_rows, ]
+late_train &lt;- r_late_data[1:round(.8*nrow(r_late_data)), ]
+late_test &lt;- r_late_data[(round(.8*nrow(r_late_data)) + 1):nrow(r_late_data), ]</code></pre>
+<p>Finally, combine the training sets with each other and the test sets with each other.</p>
+<pre class="r"><code>train_data &lt;- rbind(early_train, late_train)
+test_data &lt;- rbind(early_test, late_test)</code></pre>
+</div>
+<div id="remove-zero-variance-features" class="section level2">
+<h2>Remove Zero Variance Features</h2>
+<p>We can safely remove any miRNAs in the training set that have zero variance.</p>
+<pre class="r"><code>no_variance &lt;- sapply(train_data[, -c(1:2)], function(column){
+  v &lt;- var(column, na.rm = TRUE)
+  if(v == 0){TRUE}else{FALSE}
+  })
+train_data &lt;- train_data[, c(TRUE, TRUE, !no_variance)]</code></pre>
+</div>
+<div id="rank-mirnas" class="section level2">
+<h2>Rank miRNAs</h2>
 <p>One way to select miRNAs is to use a supervised method. So the outcome data (tumor stage) would be used to select the predictors. For each miRNA, we’ll look at the expression value for each patient. For example, let’s look at the first miRNA.</p>
-<pre class="r"><code>head(mir_tumor[, 1:3])</code></pre>
-<pre><code>##       miRNA_id TCGA-3Z-A93Z-01A-11R-A37P-13 TCGA-6D-AA2E-01A-11R-A37P-13
-## 1 hsa-let-7a-1                    7968.5881                   10844.7663
-## 2 hsa-let-7a-2                   15854.4828                   21766.2327
-## 3 hsa-let-7a-3                    8048.8517                   10875.9663
-## 4   hsa-let-7b                   16418.1305                    6349.2128
-## 5   hsa-let-7c                    3555.6600                    2620.3719
-## 6   hsa-let-7d                     555.4176                     527.0788</code></pre>
-<p>The miRNA labeled <code>hsa-let-7a-1</code> can be split into two categories, depending on the tumor stage of each patient in the clinical data frame. Here’s a box plot showing the different distributions of miRNA expression level for <code>hsa-let-7a-1</code> in early and late stage tumors in the training set.</p>
-<pre class="r"><code># get the patient barcodes from the column names in the tumor table
-ids &lt;- names(mir_tumor)[-1]
-ids &lt;- strsplit(ids, &quot;-&quot;, fixed = FALSE)
-ids &lt;- sapply(ids, function(x) paste(x[1:3], collapse = &quot;-&quot;))
-
-# create a data frame with a patient id column, where the rows are
-# in the same order as the columns in the mir_tumor data frame 
-ids &lt;- data.frame(ids, stringsAsFactors = FALSE)
-
-# merge that data frame with the clinical data frame to get the stage,
-# but preserve the order of columns in the mir_tumor data frame
-ids_stage &lt;- merge(ids, clin_os[, c(&quot;bcr_patient_barcode&quot;, &quot;stage&quot;)],
-                   all.x = TRUE, by.x = &quot;ids&quot;, by.y = &quot;bcr_patient_barcode&quot;)
-
-# make the stage column a factor
-ids_stage$stage &lt;- factor(ids_stage$stage)
-
-# boxplot of the expression data from the first row of the mir_tumor data
-# frame explained by stage
-boxplot(as.numeric(mir_tumor[1, 2:ncol(mir_tumor)]) ~ ids_stage$stage,
-        main = mir_tumor[1, 1])</code></pre>
-<p><img src="data:image/png;base64,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" title alt width="672" /></p>
+<pre class="r"><code>head(train_data[, 1:3])</code></pre>
+<pre><code>##               id stage hsa.let.7a.1
+## 262 TCGA-BP-4169 early     4131.461
+## 169 TCGA-B0-5120 early     3645.426
+## 221 TCGA-B4-5844 early     9432.902
+## 353 TCGA-BP-5004 early     3910.602
+## 32  TCGA-A3-3362 early     7474.009
+## 84  TCGA-AK-3458 early     5323.429</code></pre>
+<p>The miRNA labeled <code>hsa.let.7a.1</code> can be split into two categories, depending on the tumor stage of each patient in the clinical data frame. Here’s a box plot showing the different distributions of miRNA expression level for <code>hsa.let.7a.1</code> in early and late stage tumors in the training set.</p>
+<pre class="r"><code>boxplot(hsa.let.7a.1 ~ stage, data = train_data)</code></pre>
+<p><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABUAAAAPACAMAAADDuCPrAAAATlBMVEUAAAAAADoAAGYAOjoAOpAAZrY6AAA6ZmY6kLY6kNtmAABmtv+QOgCQkNuQ29uQ2/+2ZgC2///bkDrbtmbb////tmb/25D//7b//9v///8ncnKJAAAACXBIWXMAAB2HAAAdhwGP5fFlAAAfpklEQVR4nO3d7Xobx3KoUdrxduKPc0wrpm3d/42GBEUSBFpkTaFnMIVa68+OtLfHeqq73wAE2br7CkDK3bX/AABVCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiTtO6B3ANPMT9T0J0507WkDt2V6o2Y/cKYV/h8G0JaAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKECSgAIkCShAkoACJAkoQJKAAiQJKGfWuqgLbo2Acmq9qw7hxtQL6P3r8f7P8n9YEz73Gk4FhU8UC+iXk9uglzZUEj51lE3Tgo+VCujfP5/dp//jn4ueIAmfOh6R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" title alt width="672" /></p>
 <p>And we can get the p-value for the hypothesis that there is no difference in the mean of these two distributions.</p>
-<pre class="r"><code>early_t &lt;- as.numeric(mir_tumor[1, 2:ncol(mir_tumor)])[ids_stage$stage == &quot;early&quot;]
-late_t &lt;- as.numeric(mir_tumor[1, 2:ncol(mir_tumor)])[ids_stage$stage == &quot;late&quot;]
+<pre class="r"><code>early_t &lt;- train_data[, 3][train_data$stage == &quot;early&quot;]
+late_t &lt;- train_data[, 3][train_data$stage == &quot;late&quot;]
 t.test(early_t, late_t)$p.value</code></pre>
-<pre><code>## [1] 0.1768012</code></pre>
+<pre><code>## [1] 0.08847883</code></pre>
 <p>It appears we shouldn’t reject the null hypothesis, which makes sense based on the boxplot.</p>
-<p>Now we run the t-test for all of the miRNAs and order them from smallest to largest p-value.</p>
-<pre class="r"><code># I use an apply() function to loop through the rows of the mir_tumor
+<p>Now we run the t-test for all of the miRNAs.</p>
+<pre class="r"><code># I use an apply() function to loop through the columns of the mir_tumor
 # data frame
-pvalue &lt;- apply(mir_tumor[, -1], 1, function(row, stage){
-  early &lt;- as.numeric(row)[stage == &quot;early&quot;]
-  late &lt;- as.numeric(row)[stage == &quot;late&quot;]
+pvalue &lt;- apply(train_data[, -c(1:2)], 2, function(column, stage){
+  early &lt;- column[stage == &quot;early&quot;]
+  late &lt;- column[stage == &quot;late&quot;]
   t.test(early, late)$p.value
-}, stage = ids_stage$stage)</code></pre>
-<p>So now we can rank the <code>mir_tumor</code> table for selecting the number of miRNAs that is ideal for each algorithm</p>
-<pre class="r"><code>ranked_mir_tumor &lt;- data.frame(pvalue, mir_tumor, stringsAsFactors = FALSE)
-ranked_mir_tumor &lt;- ranked_mir_tumor[order(ranked_mir_tumor$pvalue),]
-head(ranked_mir_tumor[, 1:3])</code></pre>
-<pre><code>##           pvalue      miRNA_id TCGA.3Z.A93Z.01A.11R.A37P.13
-## 178 4.229291e-14   hsa-mir-139                 2.893878e+02
-## 314 1.167352e-11    hsa-mir-28                 2.752319e+03
-## 275 2.879526e-10    hsa-mir-21                 1.056550e+05
-## 11  6.822042e-10    hsa-let-7i                 4.413712e+02
-## 181 1.625620e-08   hsa-mir-142                 4.762514e+02
-## 509 2.404343e-08 hsa-mir-365-2                 9.092356e+00</code></pre>
-<p>The training set, test set, and ranked miRNAs will be kept a file called ’split_data.RData`.</p>
-<pre class="r"><code>save(clin_train, clin_test, ranked_mir_tumor, 
-     file = &quot;../Data/split_data.RData&quot;)</code></pre>
+}, stage = train_data$stage)</code></pre>
+<p>So now we can rank the <code>mir_tumor</code> table for selecting the number of miRNAs that is ideal for each algorithm.</p>
+<pre class="r"><code>miRNA_pvalue &lt;- data.frame(miRNA_id = names(train_data)[-c(1:2)], pvalue, stringsAsFactors = FALSE)
+miRNA_pvalue &lt;- miRNA_pvalue[order(miRNA_pvalue$pvalue),]
+head(miRNA_pvalue)</code></pre>
+<pre><code>##                miRNA_id       pvalue
+## hsa.mir.139 hsa.mir.139 1.385515e-09
+## hsa.mir.28   hsa.mir.28 1.770146e-08
+## hsa.mir.21   hsa.mir.21 4.796884e-08
+## hsa.mir.142 hsa.mir.142 1.922263e-07
+## hsa.let.7i   hsa.let.7i 2.474180e-07
+## hsa.mir.10a hsa.mir.10a 4.630312e-07</code></pre>
+</div>
+<div id="low-variance" class="section level2">
+<h2>Low Variance</h2>
+<p>We can also look at the distribution of variance and see if there are features that have very low variance, which we can consider removing (if we determine a cutoff). Here I calculate the coefficient of variation, which is the standard deviation divided by the mean.</p>
+<pre class="r"><code>train_coef_var &lt;- sapply(train_data[, -c(1:2)], function(column){
+  sd(column, na.rm = TRUE)/mean(column, na.rm = TRUE)
+  })
+train_coef_var &lt;- train_coef_var[order(train_coef_var)]
+summary(train_coef_var)</code></pre>
+<pre><code>##    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+##  0.3066  0.9647  2.4110  4.9410  6.3800 20.5900</code></pre>
+<pre class="r"><code>boxplot(train_coef_var)</code></pre>
+<p><img src="data:image/png;base64,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QG+f/B/4aEMFFKizVUA/vmteAv3299AjCChQZ6eAfvpwXsx//7z/79//GXkIAQXq7BTQuyaXD0l9P/IQAgrU2SmgN+0L9vsnoUM/BhVQoM5GAb1/uvlH84e3Y6/hBRSos1FA759tti/X7371NpIP3gEzCShAaKOAegkPrGWjgHoTCVjLTgF9/mNM7bPSXxBQoM5OAX32g/RjX0USUKDOTgH9Usxzb/4aegQBBepsFdDjrZjcTAS4ts0C+tnt7IBl7BfQFxFQoI6AAoQEFCAkoAAhAQUI/ecCClCnvFHVD1jp2sMGXpfyRlU/IMB/hYAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUICSgACEBBQgJKEBIQAFCAgoQElCAkIAChAQUIPT/QYw4bw0vdR0AAAAASUVORK5CYII=" title alt width="672" /></p>
+</div>
+<div id="remove-correlated-features" class="section level2">
+<h2>Remove Correlated Features</h2>
+<p>We can also remove highly correlated miRNAs. This would be an unsupervised method.</p>
+<p>Here I create a function that takes a data frame of normalized features and calculates the correlation matrix for those features. It then finds the two highest correlated features. If that correlation is above a threshold then one of the features is dropped (the one with the highest mean correlation with all of the other features in the matrix). After the feature is removed, a correlation matrix is calculated for the remaining features and the process is repeated until the highest correlation is below the threshold.</p>
+<pre class="r"><code>removeCorrFeatures &lt;- function(data, cutoff){ 
+  # get correlation matrix
+  cor_m &lt;- cor(data, use = &quot;pairwise.complete.obs&quot;)
+  # replace diagonal of 1s with diagonal of 0s so that the max correlation isn't
+  # a feature's correlation with itself
+  cor_m[cor_m == 1] = 0
+  # find the column with the maximum correlation
+  col.max &lt;- which.max(apply(cor_m, 2, max))
+  # find the row of the max correlation in that column
+  row.max &lt;- which.max(cor_m[, col.max])
+  # get the max value
+  max &lt;- cor_m[names(row.max), names(col.max)]
+  # loop while the max correlation is above the threshold
+  while(max &gt; cutoff){
+    # get the column for the first in the pair of highly correlated miRNAs
+    mirna1 &lt;- cor_m[, names(col.max)]
+    # remove the pair from the values in that column
+    mirna1 &lt;- mirna1[!(names(mirna1) %in% c(names(col.max), names(row.max)))]
+    # get the mean of correlations with all other features
+    mean1 &lt;- mean(mirna1)
+    # repeat for the second in the pair
+    mirna2 &lt;- cor_m[, names(row.max)]
+    mirna2 &lt;- mirna2[!(names(mirna2) %in% c(names(col.max), names(row.max)))]
+    mean2 &lt;- mean(mirna2)
+    # if the mean of the first in the pair is greater, remove that one--otherwise
+    # remove the second
+    if(mean1 &gt; mean2)
+    {
+      data &lt;- data[names(data) != names(col.max)]
+    }else{
+      data &lt;- data[names(data) != names(row.max)]
+    }
+    # restart the process until you get the max value
+    cor_m &lt;- cor(data, use = &quot;pairwise.complete.obs&quot;)
+    cor_m[cor_m == 1] = 0
+    col.max &lt;- which.max(apply(cor_m, 2, max))
+    row.max &lt;- which.max(cor_m[, col.max])
+    max &lt;- cor_m[names(row.max), names(col.max)]
+  }
+  # return the trimmed data frame
+  data
+}</code></pre>
+<p>This function can be used to trim the data down to 713 features if the cutoff is set to .75 (it takes about 3 minutes to run)</p>
+<pre class="r"><code>train_trimmed &lt;- removeCorrFeatures(train_data[, -c(1:2)], cutoff = .75)</code></pre>
+</div>
+<div id="save-data-and-function" class="section level2">
+<h2>Save Data and Function</h2>
+<p>The training set, test set, and ranked miRNAs will be kept a file called ‘split_data.RData’. The <code>removeCorrFeatures()</code> function will be kept in a file called ‘functions.RData’.</p>
+<pre class="r"><code>save(train_data, test_data, miRNA_pvalue, 
+     file = &quot;../Data/split_data.RData&quot;)
+save(removeCorrFeatures, file = &quot;../Data/functions.RData&quot;)</code></pre>
 </div>
 
 
