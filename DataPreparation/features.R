@@ -103,3 +103,5 @@ removeCorrFeatures <- function(data, cutoff){
 # then <- Sys.time()
 # train_trimmed <- removeCorrFeatures(train_data[, -c(1:2)], cutoff = .75)
 # Sys.time() - then
+
+df <- nearZeroVar(train_data)
