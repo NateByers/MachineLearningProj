@@ -1,0 +1,782 @@
+---
+title: "Training the Models"
+author: "Nathan Byers"
+date: "Sunday, April 12, 2015"
+output:
+  html_document:
+    toc: yes
+---
+
+This page documents the model training process. For documentation on how the data was prepared, see [this page](http://rpubs.com/NateByers/machLearnDataPrep).
+
+
+## Preprocessing
+
+First, we library all of the necessary packages and load the training and test sets.
+
+```{r, message=FALSE}
+library(kernlab)
+library(caret)
+library(pROC)
+# library the genefilter package (install from bioconductor first if it's not 
+# installed already)
+if(!require(genefilter)){
+  source("http://bioconductor.org/biocLite.R")
+  biocLite("genefilter")
+  library(genefilter)
+}
+load("../Data/split_data.RData")
+ls()
+```
+
+Then we make sure that the stage column in those data frames are factors.
+
+```{r}
+train_data$stage <- as.factor(train_data$stage)
+test_data$stage <- as.factor(test_data$stage)
+```
+
+We'll do two kinds of preprocessing: 
+
+1. Filter based on the intensity of the miRNA expression and the coefficient of variation, and
+2. Filter based on the p-value from the t-test in the [data preparation stage](http://rpubs.com/NateByers/machLearnDataPrep) and then
+transformation using principal components.
+
+### Preprocessing: Method 1
+
+Here we create a function that filters out miRNAs that do not have at least 20% of the sample 
+expression value at 100 or greater. Then it filters out miRNAs that do not have coefficient of 
+variation (sd/mean) between 0.7 and 10. (https://www.biostars.org/p/86981/)
+
+```{r}
+exprFilterFun <- filterfun(pOverA(p = 0.2, A = 100), cv(a = 0.7, b = 10))
+```
+
+Now we filter the training and test data sets.
+
+```{r}
+# make a matrix from the train_data data frame
+train_matrix <- train_data[, -c(1:2)]
+# transpose the matrix so that rows are miRNAs and columns are samples
+train_matrix_t <- t(train_matrix)
+# create a logical vector that indicates TRUE for features that meet the 
+# filter requirments
+expr_filter <- genefilter(train_matrix_t, exprFilterFun)
+# see how many features are left
+sum(expr_filter)
+# subset the training data down to the features that meet the requirements
+train_data_filtered <- train_data[, c(TRUE, TRUE, expr_filter)]
+# subset test data
+test_data_filtered <- test_data[, names(train_data_filtered)]
+```
+
+### Preprocessing: Method 2
+
+For this method, we narrow the features down by choosing a p-value threshold, and then using
+principal component analysis to transform the data into linear combinations of the miRNA expression data.
+
+Here we choose a threshold of 0.1 for the p-values.
+```{r}
+sig_rna <- miRNA_pvalue[miRNA_pvalue$pvalue <= .1, "miRNA_id"]
+train_data_sig <- data.frame(train_data[, 1:2], 
+                             train_data[, sig_rna])
+test_data_sig <- data.frame(test_data[, 1:2],
+                            test_data[, sig_rna])
+```
+
+Then we apply PCA to the remaining data set. We'll choose a threshold of 95% (choose components
+that account for 95% of the variation in the data).
+
+```{r}
+trans <- preProcess(train_data_sig[, -c(1:2)],
+                   method = c("center", "scale", "pca"),
+                   thresh = 0.95)
+trans
+```
+
+117 components will be used
+
+## Splitting
+
+We'll be using the training samples, which totals 424 observations. To train the parameters for each model, we'll use two data splitting methods. 5- fold cross validation and 10 fold cross validation.
+
+### 5-fold Cross Validation
+
+Here we set the training control for 5-fold cross validation.
+
+```{r}
+ctrl5f <- trainControl(method = "cv", number = 5,
+                      summaryFunction = twoClassSummary,
+                      classProbs = TRUE)
+```
+
+### 10-fold Cross Validation
+
+And here we set the training control for 10-fold cross validation.
+
+```{r}
+ctrl10f <- trainControl(method = "cv", number = 10,
+                      summaryFunction = twoClassSummary,
+                      classProbs = TRUE)
+```
+
+
+## Support Vector Machine (SVM)
+
+The first algorithm is the support vector machine.
+
+### SVM/PreProc1/5-foldCV
+
+The first model we'll train is the support vector machine, using the first preproccessing method and 5-fold cross validation.
+
+First we make a tuning grid that covers a range of sigma and cost values (Kuhn and Johnson 2013)
+```{r} 
+svmrGrid <- expand.grid(sigma = c(.00007, .00009, .0001, .0002),
+                        C = 2^(-3:8))
+```
+
+
+Now we fit the model and report the run time. ROC is used to select the optimal model.
+
+```{r, message=FALSE}
+then <- Sys.time()
+set.seed(477)
+svm_pre1_5cv <- train(stage ~ .,
+             data = train_data_filtered[, -1],
+             method = "svmRadial",
+             tuneGrid = svmrGrid,
+             metric = "ROC",
+             trControl = ctrl5f)
+Sys.time() - then             
+```
+
+We predict using the test set and evaluate the performance.
+
+```{r}
+svm_pre1_5cv_pred <- predict(svm_pre1_5cv, 
+                            newdata = test_data_filtered[, - c(1:2)])
+svm_pre1_5cv_prob <- predict(svm_pre1_5cv, 
+                            newdata = test_data_filtered[, - c(1:2)],
+                            type = "prob")
+
+svm_pre1_5cv.df <- data.frame(stage = test_data_filtered$stage, 
+                             svm_pre1_5cv_pred, 
+                             early_prob = svm_pre1_5cv_prob$early,
+                             late_prob = svm_pre1_5cv_prob$late)
+
+head(svm_pre1_5cv.df)
+
+confusionMatrix(data = svm_pre1_5cv.df$svm_pre1_5cv_pred,
+                reference = test_data_filtered$stage,
+                positive = "late")
+
+svm_pre1_5cv_rocCurve <- roc(response = test_data_filtered$stage,
+                predictor = svm_pre1_5cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_filtered$stage)))
+
+auc(svm_pre1_5cv_rocCurve)
+
+ci.roc(svm_pre1_5cv_rocCurve)
+
+plot(svm_pre1_5cv_rocCurve, legacy.axes = TRUE)
+
+save(svm_pre1_5cv, svm_pre1_5cv_pred, svm_pre1_5cv_prob,
+     file = "../Results/svm_pre1_5cv.RData")
+
+```
+
+### SVM/PreProc2/5-foldCV
+
+SVM, preprocessing method 2, and 5 fold cross validation. (The default 
+threshold for "pca" in the `preProc` argument is 95%)
+
+```{r, message=FALSE}
+then <- Sys.time()
+set.seed(477)
+svm_pre2_5cv <- train(stage ~ .,
+             data = train_data_sig[, -1],
+             method = "svmRadial",
+             tuneGrid = svmrGrid,
+             preProc = c("center", "scale", "pca"),
+             metric = "ROC",
+             trControl = ctrl5f)
+Sys.time() - then
+
+svm_pre2_5cv_pred <- predict(svm_pre2_5cv, 
+                            newdata = test_data_sig[, - c(1:2)])
+svm_pre2_5cv_prob <- predict(svm_pre2_5cv, 
+                            newdata = test_data_sig[, - c(1:2)],
+                            type = "prob")
+
+svm_pre2_5cv.df <- data.frame(stage = test_data_sig$stage, 
+                             svm_pre2_5cv_pred, 
+                             early_prob = svm_pre2_5cv_prob$early,
+                             late_prob = svm_pre2_5cv_prob$late)
+
+head(svm_pre2_5cv.df)
+
+confusionMatrix(data = svm_pre2_5cv.df$svm_pre2_5cv_pred,
+                reference = test_data_sig$stage,
+                positive = "late")
+
+svm_pre2_5cv_rocCurve <- roc(response = test_data_sig$stage,
+                predictor = svm_pre2_5cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_sig$stage)))
+
+auc(svm_pre2_5cv_rocCurve)
+
+ci.roc(svm_pre2_5cv_rocCurve)
+
+plot(svm_pre2_5cv_rocCurve, legacy.axes = TRUE)
+
+save(svm_pre2_5cv, svm_pre2_5cv_pred, svm_pre2_5cv_prob,
+     file = "../Results/svm_pre2_5cv.RData")
+```
+
+### SVM/PreProc1/10-foldCV
+
+SVM, preproccessing method 1, and 10 fold cross validation.
+
+
+```{r, message=FALSE}
+then <- Sys.time()
+set.seed(477)
+svm_pre1_10cv <- train(stage ~ .,
+             data = train_data_filtered[, -1],
+             method = "svmRadial",
+             tuneGrid = svmrGrid,
+             metric = "ROC",
+             trControl = ctrl10f)
+Sys.time() - then             
+```
+
+We predict using the test set and evaluate the performance.
+
+```{r}
+svm_pre1_10cv_pred <- predict(svm_pre1_10cv, 
+                            newdata = test_data_filtered[, - c(1:2)])
+svm_pre1_10cv_prob <- predict(svm_pre1_10cv, 
+                            newdata = test_data_filtered[, - c(1:2)],
+                            type = "prob")
+
+svm_pre1_10cv.df <- data.frame(stage = test_data_filtered[, "stage"], 
+                             svm_pre1_10cv_pred, 
+                             early_prob = svm_pre1_10cv_prob$early,
+                             late_prob = svm_pre1_10cv_prob$late)
+
+head(svm_pre1_10cv.df)
+
+confusionMatrix(data = svm_pre1_10cv.df$svm_pre1_10cv_pred,
+                reference = test_data_filtered[, "stage"],
+                positive = "late")
+
+svm_pre1_10cv_rocCurve <- roc(response = test_data_filtered[, "stage"],
+                predictor = svm_pre1_10cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_filtered[, "stage"])))
+
+auc(svm_pre1_10cv_rocCurve)
+
+ci.roc(svm_pre1_10cv_rocCurve)
+
+plot(svm_pre1_10cv_rocCurve, legacy.axes = TRUE)
+
+save(svm_pre1_10cv, svm_pre1_10cv_pred, svm_pre1_10cv_prob,
+     file = "../Results/svm_pre1_10cv.RData")
+```
+
+### SVM/PreProc2/10-foldCV
+
+SVM, preprocessing method 2, and 10-fold cross validation.
+
+```{r, message=FALSE}
+then <- Sys.time()
+set.seed(477)
+svm_pre2_10cv <- train(stage ~ .,
+             data = train_data_sig[, -1],
+             method = "svmRadial",
+             tuneGrid = svmrGrid,
+             preProc = c("center", "scale", "pca"),
+             metric = "ROC",
+             trControl = ctrl10f)
+Sys.time() - then             
+
+svm_pre2_10cv_pred <- predict(svm_pre2_10cv, 
+                            newdata = test_data_sig[, - c(1:2)])
+svm_pre2_10cv_prob <- predict(svm_pre2_10cv, 
+                            newdata = test_data_sig[, - c(1:2)],
+                            type = "prob")
+
+svm_pre2_10cv.df <- data.frame(stage = test_data_sig[, "stage"], 
+                             svm_pre2_10cv_pred, 
+                             early_prob = svm_pre2_10cv_prob$early,
+                             late_prob = svm_pre2_10cv_prob$late)
+
+head(svm_pre2_10cv.df)
+
+confusionMatrix(data = svm_pre2_10cv.df$svm_pre2_10cv_pred,
+                reference = test_data_sig[, "stage"],
+                positive = "late")
+
+svm_pre2_10cv_rocCurve <- roc(response = test_data_sig[, "stage"],
+                predictor = svm_pre2_10cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_sig[, "stage"])))
+
+auc(svm_pre2_10cv_rocCurve)
+
+ci.roc(svm_pre2_10cv_rocCurve)
+
+plot(svm_pre2_10cv_rocCurve, legacy.axes = TRUE)
+
+save(svm_pre2_10cv, svm_pre2_10cv_pred, svm_pre2_10cv_prob,
+     file = "../Results/svm_pre2_10cv.RData")
+
+```
+
+## Random Forest (RF)
+
+The second algorithm is random forest.
+
+### RF/PreProc1/5-foldCV
+
+Random forest, preprocessing method 1, 5 fold cross validation.
+
+For random forest, we tune the mtry parameter using 5 values evenly spaced from 2
+ to p, where p = # of predictors. We also use an ensemble of
+ 1000 trees (pg. 387, Kuhn and Johnson 2013)
+
+```{r, message=FALSE}
+p <- ncol(train_data_filtered) - 2
+spaced.values <- round(seq(2, p, length.out = 7))
+mtryValues <- spaced.values[2:6]
+
+then <- Sys.time()
+set.seed(477)
+rf_pre1_5cv <- train(x = train_data_filtered[, -c(1:2)], 
+               y = train_data_filtered$stage,
+               method = "rf",
+               ntree = 1000,
+               tuneGrid = data.frame(mtry = mtryValues),
+               importance = TRUE,
+               metric = "ROC",
+               trControl = ctrl5f)
+Sys.time() - then
+
+rf_pre1_5cv_pred <- predict(rf_pre1_5cv, 
+                            newdata = test_data_filtered[, - c(1:2)])
+rf_pre1_5cv_prob <- predict(rf_pre1_5cv, 
+                            newdata = test_data_filtered[, - c(1:2)],
+                            type = "prob")
+
+rf_pre1_5cv.df <- data.frame(stage = test_data_filtered$stage, 
+                             rf_pre1_5cv_pred, 
+                             early_prob = rf_pre1_5cv_prob$early,
+                             late_prob = rf_pre1_5cv_prob$late)
+
+head(rf_pre1_5cv.df)
+
+confusionMatrix(data = rf_pre1_5cv.df$rf_pre1_5cv_pred,
+                reference = test_data_filtered$stage,
+                positive = "late")
+
+rf_pre1_5cv_rocCurve <- roc(response = test_data_filtered$stage,
+                predictor = rf_pre1_5cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_filtered$stage)))
+
+auc(rf_pre1_5cv_rocCurve)
+
+ci.roc(rf_pre1_5cv_rocCurve)
+
+plot(rf_pre1_5cv_rocCurve, legacy.axes = TRUE)
+
+save(rf_pre1_5cv, rf_pre1_5cv_pred, rf_pre1_5cv_prob,
+     file = "../Results/rf_pre1_5cv.RData")
+
+```
+
+### RF/PreProc2/5-foldCV
+
+Random forest, preprocessing method 2, 5 fold cross validation.
+
+```{r, message=FALSE}
+then <- Sys.time()
+set.seed(477)
+rf_pre2_5cv <- train(x = train_data_sig[, -c(1:2)], 
+               y = train_data_sig$stage,
+               method = "rf",
+               ntree = 1000,
+               tuneGrid = data.frame(mtry = mtryValues),
+               preProc = c("center", "scale", "pca"),
+               importance = TRUE,
+               metric = "ROC",
+               trControl = ctrl5f)
+Sys.time() - then
+
+rf_pre2_5cv_pred <- predict(rf_pre2_5cv, 
+                            newdata = test_data_sig[, - c(1:2)])
+rf_pre2_5cv_prob <- predict(rf_pre2_5cv, 
+                            newdata = test_data_sig[, - c(1:2)],
+                            type = "prob")
+
+rf_pre2_5cv.df <- data.frame(stage = test_data_sig$stage, 
+                             rf_pre2_5cv_pred, 
+                             early_prob = rf_pre2_5cv_prob$early,
+                             late_prob = rf_pre2_5cv_prob$late)
+
+head(rf_pre2_5cv.df)
+
+confusionMatrix(data = rf_pre2_5cv.df$rf_pre2_5cv_pred,
+                reference = test_data_sig$stage,
+                positive = "late")
+
+rf_pre2_5cv_rocCurve <- roc(response = test_data_sig$stage,
+                predictor = rf_pre2_5cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_sig$stage)))
+
+auc(rf_pre2_5cv_rocCurve)
+
+ci.roc(rf_pre2_5cv_rocCurve)
+
+plot(rf_pre2_5cv_rocCurve, legacy.axes = TRUE)
+
+save(rf_pre2_5cv, rf_pre2_5cv_pred, rf_pre2_5cv_prob,
+     file = "../Results/rf_pre2_5cv.RData")
+```
+
+### RF/PreProc1/10-foldCV
+
+Random forest, preprocessing method 1, 10 fold cross validataion.
+
+```{r, message=FALSE}
+then <- Sys.time()
+set.seed(477)
+rf_pre1_10cv <- train(x = train_data_filtered[, -c(1:2)], 
+               y = train_data_filtered[, "stage"],
+               method = "rf",
+               ntree = 1000,
+               tuneGrid = data.frame(mtry = mtryValues),
+               importance = TRUE,
+               metric = "ROC",
+               trControl = ctrl10f)
+Sys.time() - then
+
+rf_pre1_10cv_pred <- predict(rf_pre1_10cv, 
+                            newdata = test_data_filtered[, - c(1:2)])
+rf_pre1_10cv_prob <- predict(rf_pre1_10cv, 
+                            newdata = test_data_filtered[, - c(1:2)],
+                            type = "prob")
+
+rf_pre1_10cv.df <- data.frame(stage = test_data_filtered[, "stage"], 
+                             rf_pre1_10cv_pred, 
+                             early_prob = rf_pre1_10cv_prob$early,
+                             late_prob = rf_pre1_10cv_prob$late)
+
+head(rf_pre1_10cv.df)
+
+confusionMatrix(data = rf_pre1_10cv.df$rf_pre1_10cv_pred,
+                reference = test_data_filtered[, "stage"],
+                positive = "late")
+
+rf_pre1_10cv_rocCurve <- roc(response = test_data_filtered[, "stage"],
+                predictor = rf_pre1_10cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_filtered[, "stage"])))
+
+auc(rf_pre1_10cv_rocCurve)
+
+ci.roc(rf_pre1_10cv_rocCurve)
+
+plot(rf_pre1_10cv_rocCurve, legacy.axes = TRUE)
+
+save(rf_pre1_10cv, rf_pre1_10cv_pred, rf_pre1_10cv_prob,
+     file = "../Results/rf_pre1_10cv.RData")
+```
+
+### RF/PreProc2/10-foldCV
+
+Random forest, preprocessing method, 10 fold cross validation
+
+```{r, message=FALSE}
+then <- Sys.time()
+set.seed(477)
+rf_pre2_10cv <- train(x = train_data_sig[, -c(1:2)], 
+               y = train_data_sig[, "stage"],
+               method = "rf",
+               ntree = 1000,
+               tuneGrid = data.frame(mtry = mtryValues),
+               preProc = c("center", "scale", "pca"),
+               importance = TRUE,
+               metric = "ROC",
+               trControl = ctrl10f)
+Sys.time() - then
+
+rf_pre2_10cv_pred <- predict(rf_pre2_10cv, 
+                            newdata = test_data_sig[, - c(1:2)])
+rf_pre2_10cv_prob <- predict(rf_pre2_10cv, 
+                            newdata = test_data_sig[, - c(1:2)],
+                            type = "prob")
+
+rf_pre2_10cv.df <- data.frame(stage = test_data_sig[, "stage"], 
+                             rf_pre2_10cv_pred, 
+                             early_prob = rf_pre2_10cv_prob$early,
+                             late_prob = rf_pre2_10cv_prob$late)
+
+head(rf_pre2_10cv.df)
+
+confusionMatrix(data = rf_pre2_10cv.df$rf_pre2_10cv_pred,
+                reference = test_data_sig[, "stage"],
+                positive = "late")
+
+rf_pre2_10cv_rocCurve <- roc(response = test_data_sig[, "stage"],
+                predictor = rf_pre2_10cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_sig[, "stage"])))
+
+auc(rf_pre2_10cv_rocCurve)
+
+ci.roc(rf_pre2_10cv_rocCurve)
+
+plot(rf_pre2_10cv_rocCurve, legacy.axes = TRUE)
+
+save(rf_pre2_10cv, rf_pre2_10cv_pred, rf_pre2_10cv_prob,
+     file = "../Results/rf_pre2_10cv.RData")
+
+```
+
+## Naive Bayes (NB)
+
+The last algorithm is naive Bayes.
+
+### NB/PreProc1/5-foldCV
+
+Naive Bayes, preprocessing method 1, 5 fold cross validation.
+
+```{r, message=FALSE, warning=FALSE}
+then <- Sys.time()
+set.seed(477)
+nb_pre1_5cv <- train(x = train_data_filtered[, -c(1:2)], 
+               y = train_data_filtered$stage,
+               method = "nb",
+               ntree = 1000,
+               tuneGrid = data.frame(usekernel = c(TRUE, FALSE), fL = 2),
+               importance = TRUE,
+               metric = "ROC",
+               trControl = ctrl5f)
+Sys.time() - then
+
+nb_pre1_5cv_pred <- predict(nb_pre1_5cv, 
+                            newdata = test_data_filtered[, - c(1:2)])
+nb_pre1_5cv_prob <- predict(nb_pre1_5cv, 
+                            newdata = test_data_filtered[, - c(1:2)],
+                            type = "prob")
+
+nb_pre1_5cv.df <- data.frame(stage = test_data_filtered$stage, 
+                             nb_pre1_5cv_pred, 
+                             early_prob = nb_pre1_5cv_prob$early,
+                             late_prob = nb_pre1_5cv_prob$late)
+
+head(nb_pre1_5cv.df)
+
+confusionMatrix(data = nb_pre1_5cv.df$nb_pre1_5cv_pred,
+                reference = test_data_filtered$stage,
+                positive = "late")
+
+nb_pre1_5cv_rocCurve <- roc(response = test_data_filtered$stage,
+                predictor = nb_pre1_5cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_filtered$stage)))
+
+auc(nb_pre1_5cv_rocCurve)
+
+ci.roc(nb_pre1_5cv_rocCurve)
+
+plot(nb_pre1_5cv_rocCurve, legacy.axes = TRUE)
+
+save(nb_pre1_5cv, nb_pre1_5cv_pred, nb_pre1_5cv_prob,
+     file = "../Results/nb_pre1_5cv.RData")
+```
+
+### NB/PreProc2/5-foldCV
+
+Naive Bayes, preprocessing method 2, 5 fold cross validation.
+
+```{r, message=FALSE, warning=FALSE}
+then <- Sys.time()
+set.seed(477)
+nb_pre2_5cv <- train(x = train_data_sig[, -c(1:2)], 
+               y = train_data_sig$stage,
+               method = "nb",
+               ntree = 1000,
+               tuneGrid = data.frame(usekernel = c(TRUE, FALSE), fL = 2),
+               preProc = c("center", "scale", "pca"),
+               importance = TRUE,
+               metric = "ROC",
+               trControl = ctrl5f)
+Sys.time() - then
+
+nb_pre2_5cv_pred <- predict(nb_pre2_5cv, 
+                            newdata = test_data_sig[, - c(1:2)])
+nb_pre2_5cv_prob <- predict(nb_pre2_5cv, 
+                            newdata = test_data_sig[, - c(1:2)],
+                            type = "prob")
+
+nb_pre2_5cv.df <- data.frame(stage = test_data_sig$stage, 
+                             nb_pre2_5cv_pred, 
+                             early_prob = nb_pre2_5cv_prob$early,
+                             late_prob = nb_pre2_5cv_prob$late)
+
+head(nb_pre2_5cv.df)
+
+confusionMatrix(data = nb_pre2_5cv.df$nb_pre2_5cv_pred,
+                reference = test_data_sig$stage,
+                positive = "late")
+
+nb_pre2_5cv_rocCurve <- roc(response = test_data_sig$stage,
+                predictor = nb_pre2_5cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_sig$stage)))
+
+auc(nb_pre2_5cv_rocCurve)
+
+ci.roc(nb_pre2_5cv_rocCurve)
+
+plot(nb_pre2_5cv_rocCurve, legacy.axes = TRUE)
+
+save(nb_pre2_5cv, nb_pre2_5cv_pred, nb_pre2_5cv_prob,
+     file = "../Results/nb_pre2_5cv.RData")
+```
+
+### NB/PreProc1/10-foldCV
+
+Naive Bayes, preprocessing method 1, 10 fold cross validation.
+
+```{r, message=FALSE, warning=FALSE}
+then <- Sys.time()
+set.seed(477)
+nb_pre1_10cv <- train(x = train_data_filtered[, -c(1:2)], 
+               y = train_data_filtered[, "stage"],
+               method = "nb",
+               ntree = 1000,
+               tuneGrid = data.frame(usekernel = c(TRUE, FALSE), fL = 2),
+               importance = TRUE,
+               metric = "ROC",
+               trControl = ctrl10f)
+Sys.time() - then
+
+nb_pre1_10cv_pred <- predict(nb_pre1_10cv, 
+                            newdata = test_data_filtered[, - c(1:2)])
+nb_pre1_10cv_prob <- predict(nb_pre1_10cv, 
+                            newdata = test_data_filtered[, - c(1:2)],
+                            type = "prob")
+
+nb_pre1_10cv.df <- data.frame(stage = test_data_filtered[, "stage"], 
+                             nb_pre1_10cv_pred, 
+                             early_prob = nb_pre1_10cv_prob$early,
+                             late_prob = nb_pre1_10cv_prob$late)
+
+head(nb_pre1_10cv.df)
+
+confusionMatrix(data = nb_pre1_10cv.df$nb_pre1_10cv_pred,
+                reference = test_data_filtered[, "stage"],
+                positive = "late")
+
+nb_pre1_10cv_rocCurve <- roc(response = test_data_filtered[, "stage"],
+                predictor = nb_pre1_10cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_filtered[, "stage"])))
+
+auc(nb_pre1_10cv_rocCurve)
+
+ci.roc(nb_pre1_10cv_rocCurve)
+
+plot(nb_pre1_10cv_rocCurve, legacy.axes = TRUE)
+
+save(nb_pre1_10cv, nb_pre1_10cv_pred, nb_pre1_10cv_prob,
+     file = "../Results/nb_pre1_10cv.RData")
+```
+
+### nb/PreProc2/10-foldCV
+
+Random forest, preprocessing method, 10 fold cross validation.
+
+```{r, message=FALSE, warning=FALSE}
+then <- Sys.time()
+set.seed(477)
+nb_pre2_10cv <- train(x = train_data_sig[, -c(1:2)], 
+               y = train_data_sig[, "stage"],
+               method = "nb",
+               ntree = 1000,
+               tuneGrid = data.frame(usekernel = c(TRUE, FALSE), fL = 2),
+               preProc = c("center", "scale", "pca"),
+               importance = TRUE,
+               metric = "ROC",
+               trControl = ctrl10f)
+Sys.time() - then
+
+nb_pre2_10cv_pred <- predict(nb_pre2_10cv, 
+                            newdata = test_data_sig[, - c(1:2)])
+nb_pre2_10cv_prob <- predict(nb_pre2_10cv, 
+                            newdata = test_data_sig[, - c(1:2)],
+                            type = "prob")
+
+nb_pre2_10cv.df <- data.frame(stage = test_data_sig[, "stage"], 
+                             nb_pre2_10cv_pred, 
+                             early_prob = nb_pre2_10cv_prob$early,
+                             late_prob = nb_pre2_10cv_prob$late)
+
+head(nb_pre2_10cv.df)
+
+confusionMatrix(data = nb_pre2_10cv.df$nb_pre2_10cv_pred,
+                reference = test_data_sig[, "stage"],
+                positive = "late")
+
+nb_pre2_10cv_rocCurve <- roc(response = test_data_sig[, "stage"],
+                predictor = nb_pre2_10cv.df$early_prob,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_sig[, "stage"])))
+
+auc(nb_pre2_10cv_rocCurve)
+
+ci.roc(nb_pre2_10cv_rocCurve)
+
+plot(nb_pre2_10cv_rocCurve, legacy.axes = TRUE)
+
+save(nb_pre2_10cv, nb_pre2_10cv_pred, nb_pre2_10cv_prob,
+     file = "../Results/nb_pre2_10cv.RData")
+
+```
+
+## Session Information
+
+```{r}
+print(sessionInfo(), locale = FALSE)
+```

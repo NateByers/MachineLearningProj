@@ -11,7 +11,7 @@ if(!require(genefilter)){
   library(genefilter)
 }
 
-load("./Data/split_data.RData")
+load("../Data/split_data.RData")
 # make stage a factor
 train_data$stage <- as.factor(train_data$stage)
 test_data$stage <- as.factor(test_data$stage)
@@ -36,6 +36,8 @@ expr_filter <- genefilter(train_matrix_t, exprFilterFun)
 sum(expr_filter)
 # subset the training data down to the features that meet the requirements
 train_data_filtered <- train_data[, c(TRUE, TRUE, expr_filter)]
+# subset test data
+test_data_filtered <- test_data[, names(train_data_filtered)]
 
 
 ## Evaluate the model using overall 10-fold cross-validation (default for method "cv")
@@ -63,37 +65,37 @@ fit <- train(x = train_data_filtered[, -c(1:2)],
 
 fit
 
-fit_pred <- predict(fit, newdata = test_data[, - c(1:2)])
-fit_prob <- predict(fit, newdata = test_data[, - c(1:2)],
+fit_pred <- predict(fit, newdata = test_data_filtered[, - c(1:2)])
+fit_prob <- predict(fit, newdata = test_data_filtered[, - c(1:2)],
                     type = "prob")
 
-fit.df <- data.frame(stage = test_data$stage, fit_pred, 
+fit.df <- data.frame(stage = test_data_filtered$stage, fit_pred, 
                      early_prob = fit_prob$early,
                      late_prob = fit_prob$late)
 
 head(fit.df)
 
 sensitivity(data = fit.df$fit_pred,
-            reference = test_data$stage,
+            reference = test_data_filtered$stage,
             positive = "late")
 
 specificity(data = fit.df$fit_pred,
-            reference = test_data$stage,
+            reference = test_data_filtered$stage,
             negative = "early")
 
 posPredValue(data = fit.df$fit_pred,
-             reference = test_data$stage,
+             reference = test_data_filtered$stage,
              positive = "late")
 
 negPredValue(data = fit.df$fit_pred,
-             reference = test_data$stage,
+             reference = test_data_filtered$stage,
              negative = "early")
 
 confusionMatrix(data = fit.df$fit_pred,
-                reference = test_data$stage,
+                reference = test_data_filtered$stage,
                 positive = "late")
 
-rocCurve <- roc(response = test_data$stage,
+rocCurve <- roc(response = test_data_filtered$stage,
                 predictor = fit.df$early,
                 ## This function assumes that the second
                 ## class is the event of interest, so we
@@ -106,3 +108,122 @@ ci.roc(rocCurve)
 
 plot(rocCurve, legacy.axes = TRUE)
 
+####################################################################################
+
+# use recursive feature elimination (pg. 494-95, Kuhn and Johnson)
+
+# first, remove columns that had a pvalue above .10
+sig_rna <- miRNA_pvalue[miRNA_pvalue$pvalue <= .1, "miRNA_id"]
+train_data_sig <- data.frame(train_data[, 1:2], 
+                             train_data[, sig_rna])
+test_data_sig <- data.frame(test_data[, 1:2],
+                            test_data[, sig_rna])
+
+## This summary function is used to evaluate the models.
+fiveStats <- function(...) c(twoClassSummary(...), defaultSummary(...))
+
+## The candidate set of the number of predictors to evaluate
+varSeq <- seq(2, ncol(train_data_sig[, -c(1:2)]) - 1, by = 2)
+
+## The rfe() function in the caret package is used for recursive feature 
+## elimiation. 
+
+ctrl <- rfeControl(method = "cv",
+                   saveDetails = TRUE,
+                   returnResamp = "final")
+
+ctrl$functions <- rfFuncs
+ctrl$functions$summary <- fiveStats
+set.seed(721)
+rfRFE <- rfe(train_data_sig[, -c(1:2)],
+             train_data_sig$stage,
+             sizes = varSeq,
+             metric = "ROC",
+             ntree = 1000,
+             rfeControl = ctrl)
+rfRFE
+
+rfRFE_pred <- predict(rfRFE, newdata = test_data_sig[, - c(1:2)])
+
+confusionMatrix(data = rfRFE_pred$pred,
+                reference = test_data_sig$stage,
+                positive = "late")
+
+rocCurve <- roc(response = test_data_sig$stage,
+                predictor = rfRFE_pred$early,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(test_data_sig$stage)))
+
+auc(rocCurve)
+
+ci.roc(rocCurve)
+
+plot(rocCurve, legacy.axes = TRUE)
+
+#############################################################################
+
+# Cut down predictors using p-values and use PCA to preprocess
+
+# first, remove columns that had a pvalue above .1
+sig_rna <- miRNA_pvalue[miRNA_pvalue$pvalue <= .1, "miRNA_id"]
+train_data_sig <- data.frame(train_data[, 1:2], 
+                             train_data[, sig_rna])
+test_data_sig <- data.frame(test_data[, 1:2],
+                            test_data[, sig_rna])
+
+## Evaluate the model using overall 10-fold cross-validation (default for method "cv")
+ctrl <- trainControl(method = "cv",
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+
+
+# we tune the mtry parameter using 5 values evenly spaced from 2
+# to p, where p = # of predictors, and use an ensemble of
+# 1000 trees (pg. 387, Kuhn and Johnson 2013)
+
+p <- ncol(train_data_sig) - 2
+spaced.values <- round(seq(2, p, length.out = 7))
+mtryValues <- spaced.values[2:6]
+then <- Sys.time()
+set.seed(476)
+fit_pca <- train(x = train_data_sig[, -c(1:2)], 
+             y = train_data_sig$stage,
+             method = "rf",
+             ntree = 1000,
+             tuneGrid = data.frame(mtry = mtryValues),
+             preProc = c("center", "scale", "pca"),
+             importance = TRUE,
+             metric = "ROC",
+             trControl = ctrl)
+Sys.time() - then
+
+fit_pca
+
+fit_pca_pred <- predict(fit_pca, newdata = test_data_sig[, - c(1:2)])
+fit_pca_prob <- predict(fit_pca, newdata = test_data_sig[, - c(1:2)],
+                        type = "prob")
+
+fit_pca.df <- data.frame(stage = test_data_sig$stage, fit_pca_pred, 
+                         early_prob = fit_pca_prob$early,
+                         late_prob = fit_pca_prob$late)
+
+head(fit_pca.df)
+
+confusionMatrix(data = fit_pca.df$fit_pca_pred,
+                reference = test_data_sig$stage,
+                positive = "late")
+
+pca_rocCurve <- roc(response = test_data_sig$stage,
+                    predictor = fit_pca.df$early_prob,
+                    ## This function assumes that the second
+                    ## class is the event of interest, so we
+                    ## reverse the labels
+                    levels = rev(levels(test_data_sig$stage)))
+
+auc(pca_rocCurve)
+
+ci.roc(pca_rocCurve)
+
+plot(pca_rocCurve, legacy.axes = TRUE)
