@@ -1,0 +1,174 @@
+Predicting Cancer Stage Using miRNA
+========================================================
+author: 
+date: 
+
+Outline
+========================================================
+
+- [Background](#/background)
+- [Data](#/data)
+- [Methods](#/methods)
+- [Results](#/results)
+- [Analysis](#/analysis)
+
+Background
+========================================================
+type: section
+id: background
+
+KIRC
+========================================================
+
+Kidney Renal Clear Cell Carcinoma (KIRC) is the most common
+form of kidney cancer.
+
+Data
+========================================================
+type: section
+id: data
+
+TCGA
+========================================================
+
+The Cancer Genome Atlas (TCGA) data portal was used to 
+download data.
+
+Methods
+========================================================
+type: section
+id: methods
+
+Algorithms
+=======================================================
+
+1. Support vector machine (SVM)
+2. Random forest (RF)
+3. Naive Bayes (NB)
+
+Preprocessing
+=======================================================
+
+1. Filter based on intensity of expression and coefficient
+of variation (subsequently labeled `PRE1`)
+2. Filter based on p-value of t-test and transform using
+principal compenents (subsequently labeled `PRE2`)
+
+Splitting
+=======================================================
+
+1. 5-fold cross validation (subsequently labeled 5CV)
+2. 10-fold cross validation (subsequently labeled 10CV)
+
+Results
+=======================================================
+type: section
+id: results
+
+Accuracy
+======================================================
+
+
+```{r, echo=FALSE}
+files <- list.files("../Results")[grep("\\.RData", list.files("../Results"))]
+for(i in 1:length(files)) load(paste0("../Results/", files[i]), envir = .GlobalEnv)
+l <- load("../Data/split_data.RData")
+library(caret)
+predictions <- objects()[grep("_pred", objects())]
+conf.matrices <- lapply(predictions, function(prediction){
+  # have to use 'get()` to get the object using its name
+  prediction <- get(prediction)  
+  confusionMatrix(data = prediction,
+                  reference = test_data$stage,
+                  positive = "late")
+})
+names(conf.matrices) <- predictions
+Accuracy <- sapply(conf.matrices, function(mat) mat$overall["Accuracy"])
+Accuracy_Upper <- sapply(conf.matrices, function(mat) mat$overall["AccuracyUpper"])
+Accuracy_Lower <- sapply(conf.matrices, function(mat) mat$overall["AccuracyLower"])
+Algorithm <- sapply(strsplit(predictions, "_"), function(x) x[1])
+Algorithm <- toupper(Algorithm)
+Preprocess <- sapply(strsplit(predictions, "_"), function(x) x[2])
+Preprocess <- toupper(Preprocess)
+Split <- sapply(strsplit(predictions, "_"), function(x) x[3])
+Split <- toupper(Split)
+accuracy.df <- data.frame(Algorithm, Preprocess, Split, Accuracy, 
+                          Accuracy_Upper, Accuracy_Lower, 
+                          row.names = 1:length(predictions))
+```
+
+```{r, echo=FALSE}
+p_accuracy <- ggplot(accuracy.df, 
+                     aes(x = Algorithm, y = Accuracy, ymin = Accuracy_Lower,
+                         ymax = Accuracy_Upper, colour = Preprocess))
+p_accuracy <- p_accuracy + facet_grid(. ~ Split)
+p_accuracy <- p_accuracy + geom_point(position=position_dodge(width = .9)) 
+p_accuracy <- p_accuracy + geom_errorbar(position=position_dodge(width = .9))
+p_accuracy <- p_accuracy + theme(strip.background = element_rect(fill = 'khaki'))
+p_accuracy                
+
+```
+
+Specificity/Sensitivity
+========================================================
+
+```{r, echo=FALSE}
+accuracy.df$Sensitivity <- sapply(conf.matrices, function(mat) mat$byClass["Sensitivity"])
+accuracy.df$Specificity <- sapply(conf.matrices, function(mat) mat$byClass["Specificity"])
+library(tidyr)
+accuracy.long.df <- gather(accuracy.df[, -c(4:6)], Measure, Value, Sensitivity:Specificity)
+p_sens_spec <- ggplot(accuracy.long.df, 
+                     aes(x = Algorithm, y = Value, colour = Preprocess, 
+                         fill = Preprocess))
+p_sens_spec <- p_sens_spec + facet_grid(Measure ~ Split)
+p_sens_spec <- p_sens_spec + geom_bar(stat = "identity", position="dodge")
+p_sens_spec <- p_sens_spec + theme(strip.background = element_rect(fill = 'khaki'))
+p_sens_spec 
+```
+
+Area Under Curve
+========================================================
+
+```{r, echo=FALSE}
+library(pROC)
+probs <- objects()[grep("_prob", objects())]
+roc.list <- lapply(probs, function(prob, resp){
+  # have to use 'get()` to get the object using its name
+  prob <- get(prob)
+  roc(response = as.factor(resp),
+                predictor = prob$early,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(as.factor(resp))))
+}, resp = test_data$stage)
+names(roc.list) <- probs
+AUC <- sapply(roc.list, auc)
+AUC_Lower <- sapply(roc.list, function(x) ci.auc(x)[1])
+AUC_Upper <- sapply(roc.list, function(x) ci.auc(x)[3])
+
+Algorithm <- sapply(strsplit(probs, "_"), function(x) x[1])
+Algorithm <- toupper(Algorithm)
+Preprocess <- sapply(strsplit(probs, "_"), function(x) x[2])
+Preprocess <- toupper(Preprocess)
+Split <- sapply(strsplit(probs, "_"), function(x) x[3])
+Split <- toupper(Split)
+auc.df <- data.frame(Algorithm, Preprocess, Split, AUC, 
+                          AUC_Upper, AUC_Lower, 
+                          row.names = 1:length(probs))
+
+p_auc <- ggplot(auc.df, 
+                     aes(x = Algorithm, y = AUC, ymin = AUC_Lower,
+                         ymax = AUC_Upper, colour = Preprocess))
+p_auc <- p_auc + facet_grid(. ~ Split)
+p_auc <- p_auc + geom_point(position=position_dodge(width = .9)) 
+p_auc <- p_auc + geom_errorbar(position=position_dodge(width = .9))
+p_auc <- p_auc + theme(strip.background = element_rect(fill = 'khaki'))
+p_auc  
+
+```
+
+Analysis
+=======================================================================
+type: section
+id: analysis
