@@ -9,3 +9,7 @@ Documentation for the code in the DataPreparation folder can be found here: http
 ## Training the Models
 
 Documentation for training the models can be found here: http://rpubs.com/NateByers/machLearnTrain.
+
+## Results
+
+Documentation for evaluating the results can be found here: http://rpubs.com/NateByers/machLearnResults.

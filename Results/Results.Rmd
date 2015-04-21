@@ -1,0 +1,182 @@
+---
+title: "Results"
+author: "Nathan Byers"
+date: "Tuesday, April 14, 2015"
+output: html_document
+---
+
+This page evaluates the results from the algorithm training, which is documented [here](http://rpubs.com/NateByers/machLearnTrain).
+
+## Load Results
+
+First, I get all of the `.RData` file names and load them all (you need to set the environment to `.GlobalEnv` for the `load()` function
+or the objects won't show up).
+
+```{r, results='hide'}
+files <- list.files()[grep("\\.RData", list.files())]
+lapply(files, load, envir = .GlobalEnv)
+```
+
+We also need the test data.
+
+```{r}
+load("../Data/split_data.RData")
+```
+
+Here are the objects.
+
+```{r}
+objects()
+```
+
+## Confusion Matrix 
+
+Here, I get the aptly named confusion matrix for all models.
+
+```{r, message=FALSE}
+library(caret)
+predictions <- objects()[grep("_pred", objects())]
+conf.matrices <- lapply(predictions, function(prediction){
+  # have to use 'get()` to get the object using its name
+  prediction <- get(prediction)  
+  confusionMatrix(data = prediction,
+                  reference = test_data$stage,
+                  positive = "late")
+})
+names(conf.matrices) <- predictions
+
+```
+
+## Accuracy
+
+Here, I get the accuracies, and their confidence intervals, for the predictions.
+
+```{r}
+Accuracy <- sapply(conf.matrices, function(mat) mat$overall["Accuracy"])
+Accuracy_Upper <- sapply(conf.matrices, function(mat) mat$overall["AccuracyUpper"])
+Accuracy_Lower <- sapply(conf.matrices, function(mat) mat$overall["AccuracyLower"])
+```
+
+Now I make a table that can be used to plot the accuracies.
+
+```{r}
+Algorithm <- sapply(strsplit(predictions, "_"), function(x) x[1])
+Algorithm <- toupper(Algorithm)
+Preprocess <- sapply(strsplit(predictions, "_"), function(x) x[2])
+Preprocess <- toupper(Preprocess)
+Split <- sapply(strsplit(predictions, "_"), function(x) x[3])
+Split <- toupper(Split)
+accuracy.df <- data.frame(Algorithm, Preprocess, Split, Accuracy, 
+                          Accuracy_Upper, Accuracy_Lower, 
+                          row.names = 1:length(predictions))
+accuracy.df
+```
+
+Now I make two plots that show the comparison between algorithms and preprocessing:
+one plot for 5-fold cross validation and one for 10-fold.
+
+```{r}
+p_accuracy <- ggplot(accuracy.df, 
+                     aes(x = Algorithm, y = Accuracy, ymin = Accuracy_Lower,
+                         ymax = Accuracy_Upper, colour = Preprocess))
+p_accuracy <- p_accuracy + facet_grid(. ~ Split)
+p_accuracy <- p_accuracy + geom_point(position=position_dodge(width = .9)) 
+p_accuracy <- p_accuracy + geom_errorbar(position=position_dodge(width = .9))
+p_accuracy <- p_accuracy + theme(strip.background = element_rect(fill = 'khaki'))
+p_accuracy                
+
+```
+
+## Sensitivity and Specificity
+Now I add more information to the table to plot sensitivity and specificity.
+
+```{r}
+accuracy.df$Sensitivity <- sapply(conf.matrices, function(mat) mat$byClass["Sensitivity"])
+accuracy.df$Specificity <- sapply(conf.matrices, function(mat) mat$byClass["Specificity"])
+accuracy.df[, -c(4:6)]
+
+```
+
+I use `tidyr` to make it a long table for splitting the `ggplot2` graph by Sensitivity/Specificity.
+
+```{r, message = FALSE}
+library(tidyr)
+accuracy.long.df <- gather(accuracy.df[, -c(4:6)], Measure, Value, Sensitivity:Specificity)
+accuracy.long.df
+
+p_sens_spec <- ggplot(accuracy.long.df, 
+                     aes(x = Algorithm, y = Value, colour = Preprocess, 
+                         fill = Preprocess))
+p_sens_spec <- p_sens_spec + facet_grid(Measure ~ Split)
+p_sens_spec <- p_sens_spec + geom_bar(stat = "identity", position="dodge")
+p_sens_spec <- p_sens_spec + theme(strip.background = element_rect(fill = 'khaki'))
+p_sens_spec 
+```
+
+## ROC
+
+Here I calculate and plot the area under the ROC curve.
+
+```{r, message=FALSE}
+library(pROC)
+probs <- objects()[grep("_prob", objects())]
+roc.list <- lapply(probs, function(prob, resp){
+  # have to use 'get()` to get the object using its name
+  prob <- get(prob)
+  roc(response = as.factor(resp),
+                predictor = prob$early,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(as.factor(resp))))
+}, resp = test_data$stage)
+names(roc.list) <- probs
+
+AUC <- sapply(roc.list, auc)
+AUC_Lower <- sapply(roc.list, function(x) ci.auc(x)[1])
+AUC_Upper <- sapply(roc.list, function(x) ci.auc(x)[3])
+
+Algorithm <- sapply(strsplit(probs, "_"), function(x) x[1])
+Algorithm <- toupper(Algorithm)
+Preprocess <- sapply(strsplit(probs, "_"), function(x) x[2])
+Preprocess <- toupper(Preprocess)
+Split <- sapply(strsplit(probs, "_"), function(x) x[3])
+Split <- toupper(Split)
+auc.df <- data.frame(Algorithm, Preprocess, Split, AUC, 
+                          AUC_Upper, AUC_Lower, 
+                          row.names = 1:length(probs))
+auc.df
+
+p_auc <- ggplot(auc.df, 
+                     aes(x = Algorithm, y = AUC, ymin = AUC_Lower,
+                         ymax = AUC_Upper, colour = Preprocess))
+p_auc <- p_auc + facet_grid(. ~ Split)
+p_auc <- p_auc + geom_point(position=position_dodge(width = .9)) 
+p_auc <- p_auc + geom_errorbar(position=position_dodge(width = .9))
+p_auc <- p_auc + theme(strip.background = element_rect(fill = 'khaki'))
+p_auc  
+
+
+```
+
+And here I plot the ROC curves.
+
+```{r}
+
+for(m in c("SVM", "RF", "NB")){
+  # m = "SVM"
+  pre1_5cv <- roc.list[[paste0(tolower(m), "_pre1_5cv_prob")]]
+  pre1_10cv <- roc.list[[paste0(tolower(m), "_pre1_10cv_prob")]]
+  pre2_5cv <- roc.list[[paste0(tolower(m), "_pre2_5cv_prob")]]
+  pre2_10cv <- roc.list[[paste0(tolower(m), "_pre2_10cv_prob")]]
+  plot.roc(pre1_5cv, col = "black", main = m)
+  lines.roc(pre1_10cv, col = "blue")
+  lines.roc(pre2_5cv, col = "red")
+  lines.roc(pre2_10cv, col = "green")
+  legend("bottomright", legend=c("PRE1/5CV", "PRE1/10CV",
+                                 "PRE2/5CV", "PRE2/10CV"), 
+         col=c("black", "blue", "red", "green"), lwd=2)
+}
+
+
+```

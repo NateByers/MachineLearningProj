@@ -722,7 +722,7 @@ save(nb_pre1_10cv, nb_pre1_10cv_pred, nb_pre1_10cv_prob,
      file = "../Results/nb_pre1_10cv.RData")
 ```
 
-### nb/PreProc2/10-foldCV
+### NB/PreProc2/10-foldCV
 
 Random forest, preprocessing method, 10 fold cross validation.
 
