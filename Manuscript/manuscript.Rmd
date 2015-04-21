@@ -1,0 +1,130 @@
+---
+title: "Predicting Cancer Stage Using miRNA"
+author: "Anurag Bhattrai, Nathan Byers, Xi Rao, Ed Simpson"
+date: "Tuesday, April 28, 2015"
+output: pdf_document
+bibliography: bibliography.bib
+header-includes:
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \fancyhead[CO,CE]{B529 Machine Learning}
+- \fancyfoot[CO,CE]{Source https://github.com/NateByers/MachineLearningProj/tree/master/Manuscript}
+- \fancyfoot[LE,RO]{\thepage}
+---
+
+# Introduction
+
+Kidney Renal Clear Cell Carcinoma (KIRC) is the most common form of kidney cancer in humans and is responsible for up to 95% of kidney cancer. As with all cancers, tumor stage can be the most important factor in predicting prognosis and survivability. There are 5 primary stages of disease in cancer, the definitions of which vary slightly based on the type of cancer being described. Stage 0 is reserved for the origination of a tumor and is largely not detected in practice. For KIRC, Stage I is defined as a tumor of 7cm diameter or smaller and restrained to the kidney. Stage II is a tumor larger than 7cm and restrained to the kidney. Stage III involves metastases to a nearby lymph node but not distant organs and may include metastases to fatty tissue or large veins leading from the kidney. Stage IV is a tumor that has spread through the fatty tissue surrounding the kidney, involvement of more than one lymph node close to the kidney and any lymph node not near the kidney as well as distant metastases to other organs. 5 year disease-specific survival rates vary greatly in KIRC, with Stage I being 95%, Stage II at 88%, Stage III at 59% and Stage IV at 20%.(1) Early stage diagnosis greatly increases the survival rate, although it is difficult to make an early diagnosis due to the molecular complexity and divergent clinical behavior of KIRC patients. MicroRNAs (miRNAs) are small noncoding RNAs that regulate gene expression and influence cell state and phenotype. Overwhelming evidence indicates a causal role of miRNAs in the onset and maintenance of cancer [@croce2009causes]. Our study aims to develop classification models to distinguish early stage and late stage of KIRC base on miRNA expression profiles. 
+
+# Data
+
+The dataset for this study was downloaded from The Cancer Genome Atlas (TCGA) data portal (https://tcga-data.nci.nih.gov/tcga/tcgaHome2.jsp) . The Level 3 miRNASeq data for KIRC on Illumina GA and HiSeq miRNA sequencing platform consists of expression of 1046 miRNAs for 617 samples, within which 536 are tumor samples. The clinical information for KIRC was obtained from the “clinical Biotab” section of the data matrix, including the information of 531 patients. Through matching BCR (Biospecimen Core Resource) IDs, the miRNA expression of these 531 patients were retrieved from the miRNASeq dataset.  
+
+We generated a miRNA expression data matrix in Comma Separated Values (CSV) file format from the TCGA data in R, with 1046 miRNAs as column labels and 531 patients BCR IDs as row labels. The normalized counts, termed reads per million miRNA mapped, were used as an estimate for miRNA expression. The miRNAs (total 201) with no expression across all the 531 patients were removed from the data matrix, leaving 845 miRNAs for the following analysis. 
+
+The “ajcc pathologic tumor stage” from TCGA clinical data was used as tumor stage. Within 531 KIRC patients, 266 are at Stage I, 57 are at Stage II, 127 are at Stage III, and 81 are at Stage IV. We’ll mark class label of “Early Stage” for patients with clinical tumor stage I & II (total 323), and class label of “Late Stage” for tumor Stage III and IV (total 208), for the following analysis.
+
+This study dataset will be randomly stratified and split into two groups: 80% as the training dataset and 20% as the independent testing dataset. To reduce VC dimensions, we’ll first perform a pre-selection step on the training set to keep the top significant features correlated with tumor stage.
+
+# Methods
+
+Coefficient of variation:
+
+$$c_{v}=\frac{\sigma}{\mu}$$
+
+# Results
+
+```{r, message=FALSE, echo=FALSE}
+files <- list.files("../Results")[grep("\\.RData", list.files("../Results"))]
+for(i in 1:length(files)) load(paste0("../Results/", files[i]), envir = .GlobalEnv)
+l <- load("../Data/split_data.RData")
+library(caret)
+predictions <- objects()[grep("_pred", objects())]
+conf.matrices <- lapply(predictions, function(prediction){
+  # have to use 'get()` to get the object using its name
+  prediction <- get(prediction)  
+  confusionMatrix(data = prediction,
+                  reference = test_data$stage,
+                  positive = "late")
+})
+names(conf.matrices) <- predictions
+Accuracy <- sapply(conf.matrices, function(mat) mat$overall["Accuracy"])
+Accuracy_Upper <- sapply(conf.matrices, function(mat) mat$overall["AccuracyUpper"])
+Accuracy_Lower <- sapply(conf.matrices, function(mat) mat$overall["AccuracyLower"])
+Algorithm <- sapply(strsplit(predictions, "_"), function(x) x[1])
+Algorithm <- toupper(Algorithm)
+Preprocess <- sapply(strsplit(predictions, "_"), function(x) x[2])
+Preprocess <- toupper(Preprocess)
+Split <- sapply(strsplit(predictions, "_"), function(x) x[3])
+Split <- toupper(Split)
+accuracy.df <- data.frame(Algorithm, Preprocess, Split, Accuracy, 
+                          Accuracy_Upper, Accuracy_Lower, 
+                          row.names = 1:length(predictions))
+```
+
+```{r, message=FALSE, echo=FALSE}
+p_accuracy <- ggplot(accuracy.df, 
+                     aes(x = Algorithm, y = Accuracy, ymin = Accuracy_Lower,
+                         ymax = Accuracy_Upper, colour = Preprocess))
+p_accuracy <- p_accuracy + facet_grid(. ~ Split)
+p_accuracy <- p_accuracy + geom_point(position=position_dodge(width = .9)) 
+p_accuracy <- p_accuracy + geom_errorbar(position=position_dodge(width = .9))
+p_accuracy <- p_accuracy + theme(strip.background = element_rect(fill = 'khaki'))
+p_accuracy                
+
+```
+
+```{r, message=FALSE, echo=FALSE}
+accuracy.df$Sensitivity <- sapply(conf.matrices, function(mat) mat$byClass["Sensitivity"])
+accuracy.df$Specificity <- sapply(conf.matrices, function(mat) mat$byClass["Specificity"])
+library(tidyr)
+accuracy.long.df <- gather(accuracy.df[, -c(4:6)], Measure, Value, Sensitivity:Specificity)
+p_sens_spec <- ggplot(accuracy.long.df, 
+                     aes(x = Algorithm, y = Value, colour = Preprocess, 
+                         fill = Preprocess))
+p_sens_spec <- p_sens_spec + facet_grid(Measure ~ Split)
+p_sens_spec <- p_sens_spec + geom_bar(stat = "identity", position="dodge")
+p_sens_spec <- p_sens_spec + theme(strip.background = element_rect(fill = 'khaki'))
+p_sens_spec 
+```
+
+```{r, message=FALSE, echo=FALSE}
+library(pROC)
+probs <- objects()[grep("_prob", objects())]
+roc.list <- lapply(probs, function(prob, resp){
+  # have to use 'get()` to get the object using its name
+  prob <- get(prob)
+  roc(response = as.factor(resp),
+                predictor = prob$early,
+                ## This function assumes that the second
+                ## class is the event of interest, so we
+                ## reverse the labels
+                levels = rev(levels(as.factor(resp))))
+}, resp = test_data$stage)
+names(roc.list) <- probs
+AUC <- sapply(roc.list, auc)
+AUC_Lower <- sapply(roc.list, function(x) ci.auc(x)[1])
+AUC_Upper <- sapply(roc.list, function(x) ci.auc(x)[3])
+
+Algorithm <- sapply(strsplit(probs, "_"), function(x) x[1])
+Algorithm <- toupper(Algorithm)
+Preprocess <- sapply(strsplit(probs, "_"), function(x) x[2])
+Preprocess <- toupper(Preprocess)
+Split <- sapply(strsplit(probs, "_"), function(x) x[3])
+Split <- toupper(Split)
+auc.df <- data.frame(Algorithm, Preprocess, Split, AUC, 
+                          AUC_Upper, AUC_Lower, 
+                          row.names = 1:length(probs))
+
+p_auc <- ggplot(auc.df, 
+                     aes(x = Algorithm, y = AUC, ymin = AUC_Lower,
+                         ymax = AUC_Upper, colour = Preprocess))
+p_auc <- p_auc + facet_grid(. ~ Split)
+p_auc <- p_auc + geom_point(position=position_dodge(width = .9)) 
+p_auc <- p_auc + geom_errorbar(position=position_dodge(width = .9))
+p_auc <- p_auc + theme(strip.background = element_rect(fill = 'khaki'))
+p_auc  
+
+```
+
+# References
