@@ -2,7 +2,9 @@
 title: "Predicting Cancer Stage Using miRNA"
 author: "Anurag Bhattrai, Nathan Byers, Xi Rao, Ed Simpson"
 date: "Tuesday, April 28, 2015"
-output: pdf_document
+output: 
+  pdf_document:
+    fig_caption: true
 bibliography: bibliography.bib
 header-includes:
 - \usepackage{fancyhdr}
@@ -14,23 +16,37 @@ header-includes:
 
 # Introduction
 
-Kidney Renal Clear Cell Carcinoma (KIRC) is the most common form of kidney cancer in humans and is responsible for up to 95% of kidney cancer. As with all cancers, tumor stage can be the most important factor in predicting prognosis and survivability. There are 5 primary stages of disease in cancer, the definitions of which vary slightly based on the type of cancer being described. Stage 0 is reserved for the origination of a tumor and is largely not detected in practice. For KIRC, Stage I is defined as a tumor of 7cm diameter or smaller and restrained to the kidney. Stage II is a tumor larger than 7cm and restrained to the kidney. Stage III involves metastases to a nearby lymph node but not distant organs and may include metastases to fatty tissue or large veins leading from the kidney. Stage IV is a tumor that has spread through the fatty tissue surrounding the kidney, involvement of more than one lymph node close to the kidney and any lymph node not near the kidney as well as distant metastases to other organs. 5 year disease-specific survival rates vary greatly in KIRC, with Stage I being 95%, Stage II at 88%, Stage III at 59% and Stage IV at 20%.(1) Early stage diagnosis greatly increases the survival rate, although it is difficult to make an early diagnosis due to the molecular complexity and divergent clinical behavior of KIRC patients. MicroRNAs (miRNAs) are small noncoding RNAs that regulate gene expression and influence cell state and phenotype. Overwhelming evidence indicates a causal role of miRNAs in the onset and maintenance of cancer [@croce2009causes]. Our study aims to develop classification models to distinguish early stage and late stage of KIRC base on miRNA expression profiles. 
+Kidney Renal Clear Cell Carcinoma (KIRC) is the most common form of kidney cancer in humans and is responsible for up to 95% of kidney cancer. As with all cancers, tumor stage can be the most important factor in predicting prognosis and survivability. There are 5 primary stages of disease in cancer, the definitions of which vary slightly based on the type of cancer being described. Stage 0 is reserved for the origination of a tumor and is largely not detected in practice. For KIRC, Stage I is defined as a tumor of 7cm diameter or smaller and restrained to the kidney. Stage II is a tumor larger than 7cm and restrained to the kidney. Stage III involves metastases to a nearby lymph node but not distant organs and may include metastases to fatty tissue or large veins leading from the kidney. Stage IV is a tumor that has spread through the fatty tissue surrounding the kidney, involvement of more than one lymph node close to the kidney and any lymph node not near the kidney as well as distant metastases to other organs. 5 year disease-specific survival rates vary greatly in KIRC, with Stage I being 95%, Stage II at 88%, Stage III at 59% and Stage IV at 20% [@emedicine]. Early stage diagnosis greatly increases the survival rate, although it is difficult to make an early diagnosis due to the molecular complexity and divergent clinical behavior of KIRC patients. MicroRNAs (miRNAs) are small noncoding RNAs that regulate gene expression and influence cell state and phenotype. Overwhelming evidence indicates a causal role of miRNAs in the onset and maintenance of cancer [@croce2009causes]. Our study aims to develop classification models to distinguish early stage and late stage of KIRC base on miRNA expression profiles. 
 
 # Data
 
-The dataset for this study was downloaded from The Cancer Genome Atlas (TCGA) data portal (https://tcga-data.nci.nih.gov/tcga/tcgaHome2.jsp) . The Level 3 miRNASeq data for KIRC on Illumina GA and HiSeq miRNA sequencing platform consists of expression of 1046 miRNAs for 617 samples, within which 536 are tumor samples. The clinical information for KIRC was obtained from the “clinical Biotab” section of the data matrix, including the information of 531 patients. Through matching BCR (Biospecimen Core Resource) IDs, the miRNA expression of these 531 patients were retrieved from the miRNASeq dataset.  
+The dataset for this study was downloaded from The Cancer Genome Atlas (TCGA) data protal (https://tcga-data.nci.nih.gov/tcga/tcgaHome2.jsp). The Level 3 miRNASeq data for KIRC on Illumina GA and HiSeq miRNA sequencing platform consists of expression of 1046 miRNAs for 617 samples, within which 536 are tumor samples. The clinical information for KIRC was obtained from the “clinical Biotab” section of the data matrix, including the information of 531 patients. Through matching BCR (Biospecimen Core Resource) IDs, the miRNA expression of these 531 patients were retrieved from the miRNASeq dataset.  
 
-We generated a miRNA expression data matrix in Comma Separated Values (CSV) file format from the TCGA data in R, with 1046 miRNAs as column labels and 531 patients BCR IDs as row labels. The normalized counts, termed reads per million miRNA mapped, were used as an estimate for miRNA expression. The miRNAs (total 201) with no expression across all the 531 patients were removed from the data matrix, leaving 845 miRNAs for the following analysis. 
+We generated a miRNA expression data matrix in Comma Separated Values (CSV) file format from the TCGA data in `R`, with 1046 miRNAs as column labels and 531 patients BCR IDs as row labels. The normalized counts, termed reads per million miRNA mapped, were used as an estimate for miRNA expression. The miRNAs (total 201) with no expression across all the 531 patients were removed from the data matrix, leaving 845 miRNAs for the following analysis. 
 
-The “ajcc pathologic tumor stage” from TCGA clinical data was used as tumor stage. Within 531 KIRC patients, 266 are at Stage I, 57 are at Stage II, 127 are at Stage III, and 81 are at Stage IV. We’ll mark class label of “Early Stage” for patients with clinical tumor stage I & II (total 323), and class label of “Late Stage” for tumor Stage III and IV (total 208), for the following analysis.
+The “ajcc pathologic tumor stage” from TCGA clinical data was used as tumor stage. Within 531 KIRC patients, 266 are at Stage I, 57 are at Stage II, 127 are at Stage III, and 81 are at Stage IV. We marked class label of “Early Stage” for patients with clinical tumor stage I & II (total 323), and class label of “Late Stage” for tumor Stage III and IV (total 208), for the following analysis.
 
-This study dataset will be randomly stratified and split into two groups: 80% as the training dataset and 20% as the independent testing dataset. To reduce VC dimensions, we’ll first perform a pre-selection step on the training set to keep the top significant features correlated with tumor stage.
+This study dataset was randomly stratified and split into two groups: 80% as the training dataset and 20% as the independent testing dataset. 
 
 # Methods
 
-Coefficient of variation:
+## Feature selection
 
-$$c_{v}=\frac{\sigma}{\mu}$$
+To reduce VC dimensions, we first performed a pre-selection step on the training set to keep the top significant features correlated with tumor stage. We tried two methods. In the first method (method 1, and subsequently labeld as "PRE1" in figures and tables), we filtered out miRNAs that do not have at least 20% of the sample expression value greater than or equal to 100 and do not have coefficient of variation (sd/mean) between 0.7 and 10, by using genefilter from Bioconductor (http://bioconductor.org/biocLite.R). 45 miRNAs were left after filtering. In the second method (method 2, and subsequently labeled "PRE2" in figures and tables), we first calculated the correlation of miRNA expression with tumor stage (early or late), and then narrowed the features down by choosing a p-value threshold of 0.1. We then used principal component analysis to transform the data into linear combinations of the miRNA expression data (account for 95% of the variation in the data). 117 miRNAs were selected using this second method.
+
+## Classification algorithms
+
+We applied three algorithms to the data for predicting the binary outcome of tumor stage: Random Forest, Support Vector Machine (SVM), and Naive Bayes. Random Forest is randomly constructed ensemble of independent decision trees. SVM are a set of supervised learning methods and we used Radial Basis Function Kernel.  Naive Bayes algorithm works on the assumption that all the features are statistically independent and is based on Bayes theorem. 
+
+We used the `R` package `caret` to train all the models. The `caret` package (which stands for "classification and regression training"") is a set of functions that attempt to streamline the model training process for complex regression and classification problems. We used the `train()` function for training the models. Different parameters were tuned according to each algorithm to get the optimized training models. For random forest (`method='rf'`), the `mtry` parameter was tuned; for SVM (`method='svmRadial'`), the sigma and cost values were tuned; for Naive Bayes (`method='nb'`), fL and usekernel were tuned.  
+
+### Training models
+
+The three supervised machine learning algorithms were trained on the training dataset and further validated by 10-fold cross-validation. The training models generated were compared based on the accuracy and AUC.
+
+### Testing models
+
+The performance of best-trained and cross-validated models were further evaluated on the testing data. Accuracy and AUC were compared. 
 
 # Results
 
@@ -60,35 +76,29 @@ Split <- toupper(Split)
 accuracy.df <- data.frame(Algorithm, Preprocess, Split, Accuracy, 
                           Accuracy_Upper, Accuracy_Lower, 
                           row.names = 1:length(predictions))
-```
-
-```{r, message=FALSE, echo=FALSE}
-p_accuracy <- ggplot(accuracy.df, 
-                     aes(x = Algorithm, y = Accuracy, ymin = Accuracy_Lower,
-                         ymax = Accuracy_Upper, colour = Preprocess))
-p_accuracy <- p_accuracy + facet_grid(. ~ Split)
-p_accuracy <- p_accuracy + geom_point(position=position_dodge(width = .9)) 
-p_accuracy <- p_accuracy + geom_errorbar(position=position_dodge(width = .9))
-p_accuracy <- p_accuracy + theme(strip.background = element_rect(fill = 'khaki'))
-p_accuracy                
-
-```
-
-```{r, message=FALSE, echo=FALSE}
 accuracy.df$Sensitivity <- sapply(conf.matrices, function(mat) mat$byClass["Sensitivity"])
 accuracy.df$Specificity <- sapply(conf.matrices, function(mat) mat$byClass["Specificity"])
 library(tidyr)
 accuracy.long.df <- gather(accuracy.df[, -c(4:6)], Measure, Value, Sensitivity:Specificity)
-p_sens_spec <- ggplot(accuracy.long.df, 
-                     aes(x = Algorithm, y = Value, colour = Preprocess, 
-                         fill = Preprocess))
-p_sens_spec <- p_sens_spec + facet_grid(Measure ~ Split)
-p_sens_spec <- p_sens_spec + geom_bar(stat = "identity", position="dodge")
-p_sens_spec <- p_sens_spec + theme(strip.background = element_rect(fill = 'khaki'))
-p_sens_spec 
+
+
 ```
 
-```{r, message=FALSE, echo=FALSE}
+## Random Forest
+Table 1 shows the accuracy, sensitivity, and specificity for the models that were trained using the Random Forest algorithm.
+
+```{r, echo=FALSE, message = FALSE,  results='asis'}
+library(xtable)
+rf.df <- accuracy.df[accuracy.df$Algorithm == "RF", ]
+rownames(rf.df) <- 1:4
+rf.table <- xtable(rf.df[,  c(2:4, 7:8)],
+                   caption='Random Forest Results')
+print(rf.table, comment = FALSE)
+```
+
+The accuracy was very similar (if not identical) among all four models. Sensitivity and specificity were also very close among the four models. Specificity was much higher than sensitivity, which means that the model was much more accurate predicting an early stage diagnosis. Figure 1 shows the ROC curves for each model. 
+
+```{r, fig.width=4,fig.height=4, message=FALSE, echo=FALSE, fig.cap="Random Forest ROC curves"}
 library(pROC)
 probs <- objects()[grep("_prob", objects())]
 roc.list <- lapply(probs, function(prob, resp){
@@ -102,6 +112,103 @@ roc.list <- lapply(probs, function(prob, resp){
                 levels = rev(levels(as.factor(resp))))
 }, resp = test_data$stage)
 names(roc.list) <- probs
+plotROC <- function(model){
+  pre1_5cv <- roc.list[[paste0(tolower(model), "_pre1_5cv_prob")]]
+  pre1_10cv <- roc.list[[paste0(tolower(model), "_pre1_10cv_prob")]]
+  pre2_5cv <- roc.list[[paste0(tolower(model), "_pre2_5cv_prob")]]
+  pre2_10cv <- roc.list[[paste0(tolower(model), "_pre2_10cv_prob")]]
+  plot.roc(pre1_5cv, col = "black", cex.axis = .8, cex.lab = .8
+           )
+  lines.roc(pre1_10cv, col = "blue")
+  lines.roc(pre2_5cv, col = "red")
+  lines.roc(pre2_10cv, col = "green")
+  legend("bottomright", legend=c("PRE1/5CV", "PRE1/10CV",
+                                 "PRE2/5CV", "PRE2/10CV"), 
+         col=c("black", "blue", "red", "green"), lwd=2,
+         cex = .8
+         )
+}
+
+plotROC(model = "RF")
+```
+
+
+## Support Vector Machine
+
+Table 2 shows the accuracy, sensitivity, and specificity for the models that were trained using the Support Vector Machine algorithm.
+
+```{r, echo=FALSE, message = FALSE,  results='asis'}
+svm.df <- accuracy.df[accuracy.df$Algorithm == "SVM", ]
+rownames(svm.df) <- 1:4
+svm.table <- xtable(svm.df[, c(2:4, 7:8)],
+                   caption='Support Vector Machine Results')
+print(svm.table, comment = FALSE)
+```
+
+The accuracy, sensitivity, and specificity were also very similar among all four models. As with the Random Forest models, specificity was much higher than sensitivity. Figure 2 shows the ROC curves for each model.
+
+```{r, fig.width=4,fig.height=4, message=FALSE, echo=FALSE, fig.cap="Support Vector Machine ROC curves"}
+plotROC(model = "SVM")
+```
+
+## Naive Bayes
+
+Table 3 shows the accuracy, sensitivity, and specificity for the models that were trained using the Naive Bayes algorithm.
+
+```{r, echo=FALSE, message = FALSE,  results='asis'}
+nb.df <- accuracy.df[accuracy.df$Algorithm == "NB", ]
+nb.table <- xtable(nb.df[, c(2:4, 7:8)],
+                   caption='Naive Bayes Results')
+print(nb.table, comment = FALSE)
+```
+
+As with the other algorithms, the accuracy, sensitivity, and specificity were very similar among all four models, with specificity being much  higher than sensitivity. Figure 2 shows the ROC curves for each model.
+
+```{r, fig.width=4,fig.height=4, message=FALSE, echo=FALSE, fig.cap="Naive Bayes ROC curves"}
+plotROC(model = "NB")
+```
+
+## Comparing Algorithms
+
+Figure 4 shows the accuracy results for all four algorithms. Random Forest had the best performance among the algorithms. The algorithms also appear to make the bigest difference in performance. Preprocessing appears to have made little difference for the Random forest algorithm accuracy, whereas it had some impact on the other two alogrithms. The first preprocessing method, which filtered out miRNAs that do not have at least 20% of the sample expression value greater than or equal to 100 and do not have coefficient of variation (sd/mean) between 0.7 and 10, appears to have yielded slightly better accuracy across the algorithms. The two data splitting methods didn't have a consistent effect on accuracy across the algorithms.
+
+
+```{r, fig.width=5,fig.height=2.5, message=FALSE, echo=FALSE, fig.cap="Accuracy for all alogrithms"}
+p_accuracy <- ggplot(accuracy.df, 
+                     aes(x = Algorithm, y = Accuracy, ymin = Accuracy_Lower,
+                         ymax = Accuracy_Upper, colour = Preprocess))
+p_accuracy <- p_accuracy + expand_limits(y=c(0,1)) + facet_grid(. ~ Split)
+p_accuracy <- p_accuracy + geom_point(position=position_dodge(width = .9)) 
+p_accuracy <- p_accuracy + geom_errorbar(position=position_dodge(width = .9))
+p_accuracy <- p_accuracy + theme(strip.background = element_rect(fill = 'khaki'),
+                                 text = element_text(size=10)
+                                 )
+p_accuracy                
+
+```
+
+Figure 5 shows the sensisitvity and specificity for all models for the three alogrithms. As already noted, sensitivity was poor accross all algorithms. Specificity was high for most models. 
+
+Considering just specificity, Naive Bayes had the poorest performance among the algorithms. Preprocessing and data splitting appears to have made little difference across the algorithms, except for Naive Bayes.
+
+```{r, fig.width=5,fig.height=2.5, message=FALSE, echo=FALSE, fig.cap="Sensitivity and specificity for all algorithms"}
+accuracy.long.df <- gather(accuracy.df[, -c(4:6)], Measure, Value, Sensitivity:Specificity)
+p_sens_spec <- ggplot(accuracy.long.df, 
+                     aes(x = Algorithm, y = Value, colour = Preprocess, 
+                         fill = Preprocess))
+p_sens_spec <- p_sens_spec + expand_limits(y=c(0,1)) + facet_grid(Measure ~ Split)
+p_sens_spec <- p_sens_spec + geom_bar(stat = "identity", position="dodge")
+p_sens_spec <- p_sens_spec + theme(strip.background = element_rect(fill = 'khaki'),
+                                 text = element_text(size=10)
+                                )
+p_sens_spec 
+```
+
+We compare the AUC for each model in Figure 6. According to this measurement of performance, the Random Forest alogorithm had the best results. Preprocessing seems to have made a consistent impact on the AUC across the algorithms. Again, the first preprocessing method yielded better performance, and it had a bigger impact than data splitting.
+
+
+```{r, fig.width=5,fig.height=2.5, message=FALSE, echo=FALSE, fig.cap="AUC for all algorithms"}
+
 AUC <- sapply(roc.list, auc)
 AUC_Lower <- sapply(roc.list, function(x) ci.auc(x)[1])
 AUC_Upper <- sapply(roc.list, function(x) ci.auc(x)[3])
@@ -119,12 +226,16 @@ auc.df <- data.frame(Algorithm, Preprocess, Split, AUC,
 p_auc <- ggplot(auc.df, 
                      aes(x = Algorithm, y = AUC, ymin = AUC_Lower,
                          ymax = AUC_Upper, colour = Preprocess))
-p_auc <- p_auc + facet_grid(. ~ Split)
+p_auc <- p_auc + expand_limits(y=c(0,1)) + facet_grid(. ~ Split)
 p_auc <- p_auc + geom_point(position=position_dodge(width = .9)) 
 p_auc <- p_auc + geom_errorbar(position=position_dodge(width = .9))
-p_auc <- p_auc + theme(strip.background = element_rect(fill = 'khaki'))
+p_auc <- p_auc + theme(strip.background = element_rect(fill = 'khaki'),
+                                 text = element_text(size=10)
+                       )
 p_auc  
 
 ```
+
+# Discussion
 
 # References
